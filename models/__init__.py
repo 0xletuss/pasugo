@@ -11,6 +11,8 @@ from .rating import Rating
 from .user_device import UserDevice
 from .user_login_history import UserLoginHistory
 from .user_preference import UserPreference
+from .rider_task import RiderTask
+from .password_reset_token import PasswordResetToken
 
 __all__ = [
     "User",
@@ -28,4 +30,6 @@ __all__ = [
     "UserDevice",
     "UserLoginHistory",
     "UserPreference",
+    "RiderTask",
+    "PasswordResetToken",
 ]
