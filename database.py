@@ -11,14 +11,18 @@ settings = Settings()
 # Database URL
 DATABASE_URL = f"mysql+pymysql://{settings.DB_USER}:{settings.DB_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
 
-# Create engine
+# Create engine with Aiven-specific settings
 engine = create_engine(
     DATABASE_URL,
     echo=settings.DEBUG,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    connect_args={"connect_timeout": 10}
+    pool_size=5,
+    max_overflow=10,
+    connect_args={
+        "connect_timeout": 15,
+        "charset": "utf8mb4",
+        "autocommit": False
+    }
 )
 
 # Create session factory
