@@ -3,6 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from config import settings
 import uvicorn
+import logging
+import traceback
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Import routes
 from routes import (
@@ -38,6 +47,8 @@ app.add_middleware(
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global exception: {str(exc)}", exc_info=True)
+    logger.error(f"Traceback: {traceback.format_exc()}")
     return JSONResponse(
         status_code=500,
         content={
@@ -80,6 +91,10 @@ app.include_router(payments_router, prefix="/api")
 # Startup event
 @app.on_event("startup")
 def startup_event():
+    logger.info(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} is starting...")
+    logger.info(f"📚 Documentation available at: /docs")
+    logger.info(f"🔗 Database: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
+    logger.info("✅ API ready to receive requests")
     print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} is starting...")
     print(f"📚 Documentation available at: /docs")
     print(f"🔗 Database: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
