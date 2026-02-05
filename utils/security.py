@@ -1,12 +1,9 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from config import settings
 from fastapi import HTTPException, status
-
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
@@ -15,15 +12,17 @@ def hash_password(password: str) -> str:
     Bcrypt has a maximum password length of 72 bytes.
     Passwords longer than 72 bytes are truncated.
     """
-    # Convert to bytes first
+    # Convert to bytes and truncate to 72 bytes
     password_bytes = password.encode('utf-8')
-    
-    # Truncate to 72 bytes (bcrypt limit)
     if len(password_bytes) > 72:
         password_bytes = password_bytes[:72]
     
-    # Hash the bytes directly - passlib accepts bytes
-    return pwd_context.hash(password_bytes)
+    # Generate salt and hash
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    
+    # Return as string
+    return hashed.decode('utf-8')
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -32,14 +31,17 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Bcrypt has a maximum password length of 72 bytes.
     Passwords longer than 72 bytes are truncated for verification.
     """
-    # Convert to bytes and truncate to 72 bytes (must match hashing behavior)
+    # Convert password to bytes and truncate to 72 bytes
     password_bytes = plain_password.encode('utf-8')
-    
     if len(password_bytes) > 72:
         password_bytes = password_bytes[:72]
     
-    # Verify using bytes
-    return pwd_context.verify(password_bytes, hashed_password)
+    # Convert hash to bytes if it's a string
+    if isinstance(hashed_password, str):
+        hashed_password = hashed_password.encode('utf-8')
+    
+    # Verify
+    return bcrypt.checkpw(password_bytes, hashed_password)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
