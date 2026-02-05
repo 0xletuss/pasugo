@@ -1,10 +1,6 @@
 import os
 import logging
 from typing import Dict, Any
-from sib_api_v3_sdk.api_client import ApiClient
-from sib_api_v3_sdk.apis.transactional_emails_api import TransactionalEmailsApi
-from sib_api_v3_sdk.models.send_smtp_email import SendSmtpEmail
-from sib_api_v3_sdk.models.send_smtp_email_to import SendSmtpEmailTo
 
 logger = logging.getLogger(__name__)
 
@@ -14,17 +10,26 @@ class BrevoEmailSender:
     
     def __init__(self):
         """Initialize Brevo API configuration"""
+        try:
+            from sib_api_v3_sdk import ApiClient, Configuration
+            from sib_api_v3_sdk.apis.transactional_emails_api import TransactionalEmailsApi
+            from sib_api_v3_sdk.models.send_smtp_email import SendSmtpEmail
+        except ImportError as e:
+            logger.error(f"Failed to import sib_api_v3_sdk: {e}")
+            raise
+        
         api_key = os.getenv("BREVO_API_KEY")
         
         if not api_key:
             raise ValueError("BREVO_API_KEY not found in environment variables")
         
         # Configure Brevo API client
-        configuration = ApiClient()
+        configuration = Configuration()
         configuration.api_key["api-key"] = api_key
         
-        self.api_client = configuration
+        self.api_client = ApiClient(configuration)
         self.api_instance = TransactionalEmailsApi(self.api_client)
+        self.SendSmtpEmail = SendSmtpEmail
         
         self.sender_email = os.getenv("SENDER_EMAIL", "bayadpasugo@gmail.com")
         self.sender_name = os.getenv("SENDER_NAME", "Pasugo App")
@@ -88,8 +93,8 @@ class BrevoEmailSender:
                 html_content = self._get_password_reset_html(otp_code)
             
             # Create email object for Brevo SDK
-            send_smtp_email = SendSmtpEmail(
-                to=[SendSmtpEmailTo(email=recipient_email)],
+            send_smtp_email = self.SendSmtpEmail(
+                to=[{"email": recipient_email}],
                 sender={"name": self.sender_name, "email": self.sender_email},
                 subject=subject,
                 html_content=html_content,
@@ -104,11 +109,11 @@ class BrevoEmailSender:
             return {
                 "success": True,
                 "message": "OTP sent to your email",
-                "message_id": response.message_id if hasattr(response, 'message_id') else None
+                "message_id": getattr(response, 'message_id', None)
             }
         
         except Exception as e:
-            logger.error(f"✗ Error sending OTP email to {recipient_email}: {str(e)}")
+            logger.error(f"✗ Error sending OTP email to {recipient_email}: {str(e)}", exc_info=True)
             return {
                 "success": False,
                 "message": "Failed to send OTP",
@@ -239,4 +244,8 @@ class BrevoEmailSender:
 
 
 # Create singleton instance
-brevo_sender = BrevoEmailSender()
+try:
+    brevo_sender = BrevoEmailSender()
+except Exception as e:
+    logger.error(f"Failed to initialize BrevoEmailSender: {e}")
+    brevo_sender = None
