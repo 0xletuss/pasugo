@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
     
+    # Cloudinary Settings
+    CLOUDINARY_CLOUD_NAME: str = os.getenv("CLOUDINARY_CLOUD_NAME", "drw82hgul")
+    CLOUDINARY_API_KEY: str = os.getenv("CLOUDINARY_API_KEY", "919455215967269")
+    CLOUDINARY_API_SECRET: str = os.getenv("CLOUDINARY_API_SECRET", "hE8IC3zaav86RegKQzB2jKmOfvQ")
+    CLOUDINARY_FOLDER_PREFIX: str = "pasugo"  # For organizing uploads
+    
     # Pagination
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 100

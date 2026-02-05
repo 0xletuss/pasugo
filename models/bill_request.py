@@ -29,7 +29,7 @@ class BillRequest(Base):
     account_number = Column(String(100), nullable=False)
     bill_amount = Column(DECIMAL(10, 2), nullable=False)
     due_date = Column(Date, nullable=True)
-    bill_photo_path = Column(String(255), nullable=True)
+    bill_photo_url = Column(String(500), nullable=True)  # Cloudinary URL for bill photo
     request_status = Column(Enum(RequestStatus), default=RequestStatus.pending, index=True)
     payment_method = Column(Enum(PaymentMethod), nullable=False)
     service_fee = Column(DECIMAL(10, 2), nullable=False)

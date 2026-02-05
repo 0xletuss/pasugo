@@ -21,7 +21,8 @@ from routes import (
     riders_router,
     complaints_router,
     notifications_router,
-    payments_router
+    payments_router,
+    uploads_router
 )
 
 # Create FastAPI app
@@ -110,6 +111,7 @@ app.include_router(riders_router, prefix="/api")
 app.include_router(complaints_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(payments_router, prefix="/api")
+app.include_router(uploads_router, prefix="/api")
 
 
 # Startup event

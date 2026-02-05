@@ -22,7 +22,7 @@ class Complaint(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=False)
     status = Column(Enum(ComplaintStatus), default=ComplaintStatus.open, index=True)
-    attachment_path = Column(String(255), nullable=True)
+    attachment_url = Column(String(500), nullable=True)  # Cloudinary URL for attachment
     created_at = Column(DateTime, server_default=func.now())
     resolved_at = Column(DateTime, nullable=True)
 
@@ -39,7 +39,7 @@ class ComplaintReply(Base):
     complaint_id = Column(Integer, ForeignKey("complaints.complaint_id", ondelete="CASCADE"), nullable=False, index=True)
     admin_id = Column(Integer, nullable=True)
     reply_message = Column(Text, nullable=False)
-    attachment_path = Column(String(255), nullable=True)
+    attachment_url = Column(String(500), nullable=True)  # Cloudinary URL for attachment
     created_at = Column(DateTime, server_default=func.now())
 
     # Relationships

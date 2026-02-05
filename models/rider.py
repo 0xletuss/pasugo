@@ -18,6 +18,7 @@ class Rider(Base):
     rider_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), unique=True, nullable=False)
     id_number = Column(String(50), nullable=False, unique=True)
+    id_document_url = Column(String(500), nullable=True)  # Cloudinary URL for ID document
     vehicle_type = Column(String(50), nullable=True)
     license_plate = Column(String(50), nullable=True)
     availability_status = Column(Enum(RiderStatus), default=RiderStatus.offline, index=True)

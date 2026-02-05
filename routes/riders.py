@@ -13,6 +13,7 @@ router = APIRouter(prefix="/riders", tags=["Riders"])
 
 # Schemas
 class CreateRiderProfileRequest(BaseModel):
+    id_number: str  # National ID or document number
     vehicle_type: str
     vehicle_plate: str
     license_number: str
@@ -51,10 +52,11 @@ def create_rider_profile(
     
     new_rider = Rider(
         user_id=current_user.user_id,
+        id_number=request.id_number,
         vehicle_type=request.vehicle_type,
-        vehicle_plate=request.vehicle_plate,
+        license_plate=request.vehicle_plate,
         license_number=request.license_number,
-        status=RiderStatus.offline
+        availability_status=RiderStatus.offline
     )
     
     db.add(new_rider)
@@ -67,7 +69,7 @@ def create_rider_profile(
         "data": {
             "rider_id": new_rider.rider_id,
             "vehicle_type": new_rider.vehicle_type,
-            "status": new_rider.status
+            "status": new_rider.availability_status
         }
     }
 
@@ -95,7 +97,7 @@ def get_rider_profile(
             "vehicle_type": rider.vehicle_type,
             "vehicle_plate": rider.vehicle_plate,
             "license_number": rider.license_number,
-            "status": rider.status,
+            "status": rider.availability_status,
             "rating": float(rider.rating) if rider.rating else 0,
             "total_deliveries": rider.total_deliveries,
             "is_verified": rider.is_verified,
@@ -150,7 +152,7 @@ def update_rider_status(
             detail="Rider profile not found"
         )
     
-    rider.status = request.status
+    rider.availability_status = request.status
     db.commit()
     
     return {
@@ -241,7 +243,7 @@ def accept_request(
     
     bill_request.rider_id = rider.rider_id
     bill_request.request_status = RequestStatus.assigned
-    rider.status = RiderStatus.busy
+    rider.availability_status = RiderStatus.busy
     
     db.commit()
     
