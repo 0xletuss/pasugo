@@ -45,7 +45,15 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Create a JWT access token"""
+    """Create a JWT access token
+    
+    Args:
+        data: Dictionary containing user data to encode
+        expires_delta: Optional custom expiration time
+        
+    Returns:
+        Encoded JWT access token
+    """
     to_encode = data.copy()
     
     if expires_delta:
@@ -53,17 +61,38 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     else:
         expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     
-    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    to_encode.update({
+        "exp": expire,
+        "iat": datetime.utcnow(),
+        "type": "access"
+    })
     
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
 
-def create_refresh_token(data: dict) -> str:
-    """Create a JWT refresh token"""
+def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a JWT refresh token
+    
+    Args:
+        data: Dictionary containing user data to encode (usually just user_id)
+        expires_delta: Optional custom expiration time
+        
+    Returns:
+        Encoded JWT refresh token
+    """
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire, "iat": datetime.utcnow(), "type": "refresh"})
+    
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    
+    to_encode.update({
+        "exp": expire,
+        "iat": datetime.utcnow(),
+        "type": "refresh"
+    })
     
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
@@ -72,7 +101,14 @@ def create_refresh_token(data: dict) -> str:
 def verify_token(token: str) -> dict:
     """Verify and decode a JWT token
     
-    Raises HTTPException with 401 status if token is invalid.
+    Args:
+        token: JWT token string to verify
+        
+    Returns:
+        Decoded token payload dictionary
+        
+    Raises:
+        HTTPException: If token is invalid or expired
     """
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
@@ -89,7 +125,12 @@ def verify_token_silent(token: str) -> Optional[dict]:
     """Verify and decode a JWT token (returns None instead of raising exception)
     
     Use this when you don't want to raise an exception.
-    Returns None if token is invalid.
+    
+    Args:
+        token: JWT token string to verify
+        
+    Returns:
+        Decoded token payload dictionary or None if invalid
     """
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
@@ -99,7 +140,14 @@ def verify_token_silent(token: str) -> Optional[dict]:
 
 
 def generate_otp(length: int = 6) -> str:
-    """Generate a random OTP code"""
+    """Generate a random OTP code
+    
+    Args:
+        length: Length of OTP (default: 6)
+        
+    Returns:
+        Random numeric OTP string
+    """
     import random
     import string
     return ''.join(random.choices(string.digits, k=length))
@@ -108,8 +156,11 @@ def generate_otp(length: int = 6) -> str:
 def validate_password_strength(password: str) -> tuple[bool, str]:
     """Validate password strength
     
+    Args:
+        password: Password string to validate
+    
     Returns:
-        (is_valid: bool, message: str)
+        Tuple of (is_valid: bool, message: str)
     
     Requirements:
         - Minimum 8 characters

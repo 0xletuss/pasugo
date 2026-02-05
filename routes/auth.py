@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr, field_validator
 from database import get_db
@@ -13,6 +13,7 @@ from utils.security import (
     validate_password_strength
 )
 from datetime import timedelta, datetime
+from typing import Optional
 import logging
 import re
 
@@ -22,7 +23,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-# Schemas
+# ============================================================================
+# SCHEMAS
+# ============================================================================
+
 class RegisterRequest(BaseModel):
     full_name: str
     email: EmailStr
@@ -45,7 +49,6 @@ class RegisterRequest(BaseModel):
     @classmethod
     def validate_phone(cls, v):
         """Validate phone number format"""
-        # Allow common international formats
         phone_pattern = r'^\+?1?\d{9,15}$'
         if not re.match(phone_pattern, v.replace(' ', '').replace('-', '')):
             raise ValueError('Invalid phone number format')
@@ -72,6 +75,7 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    remember_me: bool = True  # Default to persistent login
 
 
 class RefreshTokenRequest(BaseModel):
@@ -107,7 +111,80 @@ class LoginResponse(BaseModel):
     user: dict
 
 
-# Routes
+# ============================================================================
+# DEPENDENCY TO GET CURRENT USER
+# ============================================================================
+
+async def get_current_user(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+) -> User:
+    """Extract and verify user from Authorization header"""
+    
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    try:
+        # Extract token from "Bearer <token>"
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    try:
+        payload = verify_token(token)
+        user_id = payload.get("sub")
+        
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload"
+            )
+        
+        user = db.query(User).filter(User.user_id == user_id).first()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is inactive"
+            )
+        
+        return user
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Token verification error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+# ============================================================================
+# ROUTES
+# ============================================================================
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(request: RegisterRequest, db: Session = Depends(get_db)):
     """Register a new user
@@ -187,8 +264,11 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
     
     - **email**: User's email
     - **password**: User's password
+    - **remember_me**: Keep user logged in (default: true)
     
-    Returns access and refresh tokens for subsequent requests
+    Returns access and refresh tokens for subsequent requests.
+    Access token expires in 15 minutes.
+    Refresh token expires in 30 days (if remember_me=true) or 1 day (if remember_me=false).
     """
     
     try:
@@ -196,7 +276,6 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
         user = db.query(User).filter(User.email == request.email).first()
         
         if not user:
-            # Generic message for security
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials"
@@ -215,17 +294,23 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
                 detail="User account is inactive. Please contact support."
             )
         
-        # Create access token
+        # Create access token (short-lived: 15 minutes)
         access_token = create_access_token(
-            data={"sub": str(user.user_id), "email": user.email, "user_type": str(user.user_type)}
+            data={
+                "sub": str(user.user_id), 
+                "email": user.email, 
+                "user_type": str(user.user_type)
+            }
         )
         
-        # Create refresh token
+        # Create refresh token (long-lived: 30 days for persistent login, 1 day otherwise)
+        refresh_expiry = timedelta(days=30) if request.remember_me else timedelta(days=1)
         refresh_token = create_refresh_token(
-            data={"sub": str(user.user_id)}
+            data={"sub": str(user.user_id)},
+            expires_delta=refresh_expiry
         )
         
-        logger.info(f"User logged in: {user.email}")
+        logger.info(f"User logged in: {user.email} (remember_me={request.remember_me})")
         
         return {
             "success": True,
@@ -234,6 +319,7 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
                 "access_token": access_token,
                 "refresh_token": refresh_token,
                 "token_type": "bearer",
+                "remember_me": request.remember_me,
                 "user": {
                     "user_id": user.user_id,
                     "email": user.email,
@@ -260,7 +346,8 @@ def refresh_access_token(request: RefreshTokenRequest, db: Session = Depends(get
     
     - **refresh_token**: Valid refresh token from login
     
-    Returns new access token
+    Returns new access token and new refresh token (token rotation for security).
+    Call this endpoint when access token expires to get a new one without re-login.
     """
     
     try:
@@ -268,6 +355,12 @@ def refresh_access_token(request: RefreshTokenRequest, db: Session = Depends(get
         payload = verify_token(request.refresh_token)
         
         user_id = payload.get("sub")
+        
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token"
+            )
         
         # Get user from database
         user = db.query(User).filter(User.user_id == user_id).first()
@@ -280,14 +373,27 @@ def refresh_access_token(request: RefreshTokenRequest, db: Session = Depends(get
         
         # Create new access token
         new_access_token = create_access_token(
-            data={"sub": str(user.user_id), "email": user.email, "user_type": str(user.user_type)}
+            data={
+                "sub": str(user.user_id), 
+                "email": user.email, 
+                "user_type": str(user.user_type)
+            }
         )
+        
+        # Rotate refresh token for better security (issue new one)
+        new_refresh_token = create_refresh_token(
+            data={"sub": str(user.user_id)},
+            expires_delta=timedelta(days=30)
+        )
+        
+        logger.info(f"Token refreshed for user: {user.email}")
         
         return {
             "success": True,
             "message": "Token refreshed successfully",
             "data": {
                 "access_token": new_access_token,
+                "refresh_token": new_refresh_token,  # Return new refresh token
                 "token_type": "bearer"
             }
         }
@@ -301,29 +407,115 @@ def refresh_access_token(request: RefreshTokenRequest, db: Session = Depends(get
         )
 
 
+@router.post("/validate-token")
+def validate_token_endpoint(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """Validate if the current token is still valid
+    
+    Use this endpoint on app startup to check if user is still authenticated.
+    Returns user data if token is valid.
+    """
+    
+    if not authorization:
+        return {
+            "success": False,
+            "valid": False,
+            "message": "No token provided"
+        }
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            return {
+                "success": False,
+                "valid": False,
+                "message": "Invalid authentication scheme"
+            }
+        
+        payload = verify_token(token)
+        user_id = payload.get("sub")
+        
+        user = db.query(User).filter(User.user_id == user_id).first()
+        
+        if not user or not user.is_active:
+            return {
+                "success": False,
+                "valid": False,
+                "message": "User not found or inactive"
+            }
+        
+        return {
+            "success": True,
+            "valid": True,
+            "message": "Token is valid",
+            "data": {
+                "user": {
+                    "user_id": user.user_id,
+                    "email": user.email,
+                    "full_name": user.full_name,
+                    "user_type": str(user.user_type) if hasattr(user.user_type, 'value') else user.user_type,
+                    "phone_number": user.phone_number,
+                    "address": user.address
+                }
+            }
+        }
+        
+    except Exception as e:
+        logger.debug(f"Token validation failed: {str(e)}")
+        return {
+            "success": False,
+            "valid": False,
+            "message": "Invalid or expired token"
+        }
+
+
 @router.post("/change-password")
-def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db)):
+def change_password(
+    request: ChangePasswordRequest, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Change user password
     
     - **old_password**: Current password
     - **new_password**: New password (must be different from old)
     
-    Requires authentication token
+    Requires authentication token in Authorization header.
     """
     
     try:
-        # This would require getting current_user from token
-        # For now, placeholder implementation
-        # In production, you'd have a dependency to get current user from token
+        # Verify old password
+        if not verify_password(request.old_password, current_user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect"
+            )
         
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
+        # Check if new password is different
+        if request.old_password == request.new_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password must be different from old password"
+            )
+        
+        # Update password
+        current_user.password_hash = hash_password(request.new_password)
+        db.commit()
+        
+        logger.info(f"Password changed for user: {current_user.email}")
+        
+        return {
+            "success": True,
+            "message": "Password changed successfully. Please log in again with your new password."
+        }
+        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Change password error: {str(e)}", exc_info=True)
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to change password"
@@ -331,13 +523,15 @@ def change_password(request: ChangePasswordRequest, db: Session = Depends(get_db
 
 
 @router.post("/logout")
-def logout():
+def logout(current_user: User = Depends(get_current_user)):
     """Logout user
     
-    Note: On the client side, delete the stored tokens.
-    On the server side, you may want to implement token blacklisting
-    for additional security (optional).
+    Note: Delete the stored tokens on the client side.
+    The refresh token will become invalid after its expiration.
+    For enhanced security, you could implement token blacklisting.
     """
+    logger.info(f"User logged out: {current_user.email}")
+    
     return {
         "success": True,
         "message": "Logged out successfully. Please delete stored tokens on client."
@@ -345,49 +539,23 @@ def logout():
 
 
 @router.get("/me")
-def get_current_user(token: str = None, db: Session = Depends(get_db)):
+def get_current_user_details(current_user: User = Depends(get_current_user)):
     """Get current user details
     
-    Requires authentication token in Authorization header
+    Requires authentication token in Authorization header.
     Format: Authorization: Bearer <token>
     """
     
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-    
-    try:
-        payload = verify_token(token)
-        user_id = payload.get("sub")
-        
-        user = db.query(User).filter(User.user_id == user_id).first()
-        
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        return {
-            "success": True,
-            "data": {
-                "user_id": user.user_id,
-                "email": user.email,
-                "full_name": user.full_name,
-                "user_type": str(user.user_type) if hasattr(user.user_type, 'value') else user.user_type,
-                "phone_number": user.phone_number,
-                "address": user.address,
-                "is_active": user.is_active,
-                "created_at": user.created_at.isoformat() if hasattr(user.created_at, 'isoformat') else str(user.created_at)
-            }
+    return {
+        "success": True,
+        "data": {
+            "user_id": current_user.user_id,
+            "email": current_user.email,
+            "full_name": current_user.full_name,
+            "user_type": str(current_user.user_type) if hasattr(current_user.user_type, 'value') else current_user.user_type,
+            "phone_number": current_user.phone_number,
+            "address": current_user.address,
+            "is_active": current_user.is_active,
+            "created_at": current_user.created_at.isoformat() if hasattr(current_user.created_at, 'isoformat') else str(current_user.created_at)
         }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Get user error: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
+    }
