@@ -4,6 +4,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from database import get_db
 from models.user import User, UserType
 from models.user_preference import UserPreference
+from models.otp import OTP, OTPType
 from utils.security import (
     hash_password, 
     verify_password, 
@@ -12,6 +13,8 @@ from utils.security import (
     verify_token,
     validate_password_strength
 )
+from utils.brevo_email import brevo_sender
+from utils.otp_manager import otp_manager
 from datetime import timedelta, datetime
 from typing import Optional
 import logging
@@ -72,10 +75,77 @@ class RegisterRequest(BaseModel):
         return v
 
 
+class RegisterOTPRequest(BaseModel):
+    """Request OTP for registration"""
+    email: EmailStr
+
+
+class VerifyRegistrationOTPRequest(BaseModel):
+    """Verify OTP and complete registration"""
+    email: EmailStr
+    otp: str
+    full_name: str
+    phone_number: str
+    password: str
+    user_type: UserType
+    address: str = None
+
+    @field_validator('otp')
+    @classmethod
+    def validate_otp(cls, v):
+        """Validate OTP format"""
+        if not v or len(v.strip()) != 6 or not v.isdigit():
+            raise ValueError('OTP must be 6 digits')
+        return v.strip()
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-    remember_me: bool = True  # Default to persistent login
+    remember_me: bool = True
+
+
+class ForgotPasswordOTPRequest(BaseModel):
+    """Request OTP for password reset"""
+    email: EmailStr
+
+
+class ResetPasswordOTPRequest(BaseModel):
+    """Reset password with OTP"""
+    email: EmailStr
+    otp: str
+    new_password: str
+
+    @field_validator('otp')
+    @classmethod
+    def validate_otp(cls, v):
+        """Validate OTP format"""
+        if not v or len(v.strip()) != 6 or not v.isdigit():
+            raise ValueError('OTP must be 6 digits')
+        return v.strip()
+
+    @field_validator('new_password')
+    @classmethod
+    def validate_password(cls, v):
+        """Validate password"""
+        if isinstance(v, str):
+            password_bytes = v.encode('utf-8')
+        else:
+            password_bytes = v
+        
+        if len(password_bytes) > 72:
+            raise ValueError('Password must be no longer than 72 bytes when encoded in UTF-8')
+        
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        
+        return v
+
+
+class ResendOTPRequest(BaseModel):
+    """Resend OTP to user"""
+    email: EmailStr
+    otp_type: str  # 'registration' or 'password_reset'
 
 
 class RefreshTokenRequest(BaseModel):
@@ -182,42 +252,152 @@ async def get_current_user(
 
 
 # ============================================================================
-# ROUTES
+# REGISTRATION OTP ROUTES
 # ============================================================================
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
-def register(request: RegisterRequest, db: Session = Depends(get_db)):
-    """Register a new user
+@router.post("/register/request-otp", status_code=status.HTTP_200_OK)
+def register_request_otp(request: RegisterOTPRequest, db: Session = Depends(get_db)):
+    """
+    Step 1: User requests OTP for registration
     
-    - **full_name**: User's full name (2-100 characters)
     - **email**: Valid email address
-    - **phone_number**: Valid phone number
-    - **password**: At least 8 characters, max 72 bytes
-    - **user_type**: Either 'customer' or 'vendor'
-    - **address**: Optional address
+    
+    Returns message confirming OTP was sent.
     """
     
     try:
+        email = request.email.strip().lower()
+        
         # Check if user already exists
-        existing_user = db.query(User).filter(User.email == request.email).first()
+        existing_user = db.query(User).filter(User.email == email).first()
         if existing_user:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
             )
         
-        # Check phone number
-        existing_phone = db.query(User).filter(User.phone_number == request.phone_number).first()
-        if existing_phone:
+        # Generate OTP
+        otp_code = otp_manager.generate_otp()
+        expires_at = otp_manager.get_expiry_time()
+        
+        # Create OTP record in database (no user_id yet for registration)
+        # We'll use user_id=0 as a placeholder for registration OTPs
+        new_otp = OTP(
+            user_id=0,  # Placeholder for registration flow
+            otp_code=otp_code,
+            otp_type=OTPType.registration,
+            phone_number="",
+            expires_at=expires_at,
+            is_verified=False,
+            attempts=0
+        )
+        db.add(new_otp)
+        db.commit()
+        
+        # Send OTP via Brevo
+        result = brevo_sender.send_registration_otp(email, otp_code)
+        
+        if not result['success']:
+            db.rollback()
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Phone number already registered"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to send OTP. Please try again."
             )
         
-        # Create new user
+        logger.info(f"Registration OTP sent to: {email}")
+        
+        return {
+            "success": True,
+            "message": "OTP sent to your email. Valid for 10 minutes.",
+            "data": {
+                "email": email
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Registration OTP request error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process request. Please try again."
+        )
+
+
+@router.post("/register/verify-otp", status_code=status.HTTP_201_CREATED)
+def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Depends(get_db)):
+    """
+    Step 2: User verifies OTP and completes registration
+    
+    - **email**: User's email
+    - **otp**: 6-digit OTP code
+    - **full_name**: User's full name
+    - **phone_number**: User's phone number
+    - **password**: User's password (min 8 characters)
+    - **user_type**: 'customer' or 'vendor'
+    - **address**: Optional address
+    
+    Creates user account after successful OTP verification.
+    """
+    
+    try:
+        email = request.email.strip().lower()
+        
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Get latest OTP for this email
+        otp = db.query(OTP).filter(
+            OTP.otp_type == OTPType.registration
+        ).order_by(OTP.created_at.desc()).first()
+        
+        if not otp:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="OTP not found. Please request a new one."
+            )
+        
+        # Check if OTP is expired
+        if otp_manager.is_otp_expired(otp.expires_at):
+            db.delete(otp)
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP has expired. Please request a new one."
+            )
+        
+        # Check attempts
+        if otp.attempts >= 5:
+            db.delete(otp)
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed attempts. Please request a new OTP."
+            )
+        
+        # Verify OTP code
+        if otp.otp_code != request.otp:
+            otp.attempts += 1
+            db.commit()
+            attempts_left = otp_manager.get_attempts_remaining(otp.attempts)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid OTP. {attempts_left} attempts remaining."
+            )
+        
+        # Mark OTP as verified
+        otp.is_verified = True
+        otp.verified_at = datetime.utcnow()
+        
+        # Create user
         new_user = User(
             full_name=request.full_name,
-            email=request.email,
+            email=email,
             phone_number=request.phone_number,
             password_hash=hash_password(request.password),
             user_type=request.user_type,
@@ -235,28 +415,306 @@ def register(request: RegisterRequest, db: Session = Depends(get_db)):
         db.add(user_pref)
         db.commit()
         
-        logger.info(f"User registered: {new_user.email}")
+        logger.info(f"User registered successfully: {email}")
         
         return {
             "success": True,
-            "message": "User registered successfully",
+            "message": "Registration successful! You can now login.",
             "data": {
                 "user_id": new_user.user_id,
                 "email": new_user.email,
                 "full_name": new_user.full_name,
-                "user_type": new_user.user_type.value if hasattr(new_user.user_type, 'value') else new_user.user_type
+                "user_type": new_user.user_type.value if hasattr(new_user.user_type, 'value') else str(new_user.user_type)
             }
         }
+    
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Registration error: {str(e)}", exc_info=True)
+        logger.error(f"Registration verification error: {str(e)}", exc_info=True)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed. Please try again."
         )
 
+
+# ============================================================================
+# FORGOT PASSWORD OTP ROUTES
+# ============================================================================
+
+@router.post("/forgot-password/request-otp", status_code=status.HTTP_200_OK)
+def forgot_password_request_otp(request: ForgotPasswordOTPRequest, db: Session = Depends(get_db)):
+    """
+    Step 1: User requests OTP for password reset
+    
+    - **email**: User's email address
+    
+    Returns generic message for security (doesn't reveal if email exists).
+    """
+    
+    try:
+        email = request.email.strip().lower()
+        
+        # Check if user exists
+        user = db.query(User).filter(User.email == email).first()
+        
+        if user:
+            # Generate OTP
+            otp_code = otp_manager.generate_otp()
+            expires_at = otp_manager.get_expiry_time()
+            
+            # Delete any existing password reset OTPs for this user
+            db.query(OTP).filter(
+                OTP.user_id == user.user_id,
+                OTP.otp_type == OTPType.password_reset
+            ).delete()
+            
+            # Create OTP record
+            new_otp = OTP(
+                user_id=user.user_id,
+                otp_code=otp_code,
+                otp_type=OTPType.password_reset,
+                phone_number=user.phone_number,
+                expires_at=expires_at,
+                is_verified=False,
+                attempts=0
+            )
+            db.add(new_otp)
+            db.commit()
+            
+            # Send OTP via Brevo
+            result = brevo_sender.send_password_reset_otp(email, otp_code)
+            
+            if not result['success']:
+                db.rollback()
+                logger.warning(f"Failed to send password reset OTP to: {email}")
+        
+        # Always return generic message for security
+        logger.info(f"Password reset OTP requested for: {email}")
+        
+        return {
+            "success": True,
+            "message": "If the email exists, you will receive an OTP. Valid for 10 minutes."
+        }
+    
+    except Exception as e:
+        logger.error(f"Forgot password OTP request error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process request. Please try again."
+        )
+
+
+@router.post("/forgot-password/reset", status_code=status.HTTP_200_OK)
+def reset_password_with_otp(request: ResetPasswordOTPRequest, db: Session = Depends(get_db)):
+    """
+    Step 2: User resets password with OTP
+    
+    - **email**: User's email address
+    - **otp**: 6-digit OTP code
+    - **new_password**: New password (min 8 characters)
+    
+    Updates user password after successful OTP verification.
+    """
+    
+    try:
+        email = request.email.strip().lower()
+        
+        # Get user
+        user = db.query(User).filter(User.email == email).first()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Get latest password reset OTP for this user
+        otp = db.query(OTP).filter(
+            OTP.user_id == user.user_id,
+            OTP.otp_type == OTPType.password_reset
+        ).order_by(OTP.created_at.desc()).first()
+        
+        if not otp:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="OTP not found. Please request a new one."
+            )
+        
+        # Check if OTP is expired
+        if otp_manager.is_otp_expired(otp.expires_at):
+            db.delete(otp)
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP has expired. Please request a new one."
+            )
+        
+        # Check attempts
+        if otp.attempts >= 5:
+            db.delete(otp)
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed attempts. Please request a new OTP."
+            )
+        
+        # Verify OTP code
+        if otp.otp_code != request.otp:
+            otp.attempts += 1
+            db.commit()
+            attempts_left = otp_manager.get_attempts_remaining(otp.attempts)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid OTP. {attempts_left} attempts remaining."
+            )
+        
+        # Update password
+        user.password_hash = hash_password(request.new_password)
+        user.updated_at = datetime.utcnow()
+        
+        # Mark OTP as verified and delete
+        otp.is_verified = True
+        otp.verified_at = datetime.utcnow()
+        db.delete(otp)
+        
+        db.commit()
+        
+        logger.info(f"Password reset successfully for: {email}")
+        
+        return {
+            "success": True,
+            "message": "Password reset successfully. You can now login with your new password."
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Password reset error: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Password reset failed. Please try again."
+        )
+
+
+# ============================================================================
+# RESEND OTP ROUTE
+# ============================================================================
+
+@router.post("/otp/resend", status_code=status.HTTP_200_OK)
+def resend_otp(request: ResendOTPRequest, db: Session = Depends(get_db)):
+    """
+    Resend OTP to user
+    
+    - **email**: User's email address
+    - **otp_type**: 'registration' or 'password_reset'
+    
+    Generates and sends a new OTP code.
+    """
+    
+    try:
+        email = request.email.strip().lower()
+        otp_type_str = request.otp_type.lower().strip()
+        
+        # Map string to OTPType enum
+        if otp_type_str == "registration":
+            otp_enum = OTPType.registration
+        elif otp_type_str == "password_reset":
+            otp_enum = OTPType.password_reset
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid OTP type. Must be 'registration' or 'password_reset'."
+            )
+        
+        # Generate new OTP
+        new_otp_code = otp_manager.generate_otp()
+        new_expires_at = otp_manager.get_expiry_time()
+        
+        if otp_type_str == "registration":
+            # Delete existing registration OTP
+            db.query(OTP).filter(
+                OTP.otp_type == OTPType.registration
+            ).delete()
+            
+            # Create new registration OTP
+            new_otp = OTP(
+                user_id=0,
+                otp_code=new_otp_code,
+                otp_type=OTPType.registration,
+                phone_number="",
+                expires_at=new_expires_at,
+                is_verified=False,
+                attempts=0
+            )
+            
+            # Send OTP via Brevo
+            result = brevo_sender.send_registration_otp(email, new_otp_code)
+        
+        else:  # password_reset
+            # Get user
+            user = db.query(User).filter(User.email == email).first()
+            
+            if not user:
+                # Return generic message for security
+                return {
+                    "success": True,
+                    "message": "If the email exists, a new OTP will be sent."
+                }
+            
+            # Delete existing password reset OTP
+            db.query(OTP).filter(
+                OTP.user_id == user.user_id,
+                OTP.otp_type == OTPType.password_reset
+            ).delete()
+            
+            # Create new password reset OTP
+            new_otp = OTP(
+                user_id=user.user_id,
+                otp_code=new_otp_code,
+                otp_type=OTPType.password_reset,
+                phone_number=user.phone_number,
+                expires_at=new_expires_at,
+                is_verified=False,
+                attempts=0
+            )
+            
+            # Send OTP via Brevo
+            result = brevo_sender.send_password_reset_otp(email, new_otp_code)
+        
+        db.add(new_otp)
+        db.commit()
+        
+        if not result['success']:
+            logger.warning(f"Failed to resend OTP to: {email}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to send OTP. Please try again."
+            )
+        
+        logger.info(f"OTP resent to: {email} (Type: {otp_type_str})")
+        
+        return {
+            "success": True,
+            "message": "New OTP sent to your email. Valid for 10 minutes."
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Resend OTP error: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to resend OTP. Please try again."
+        )
+
+
+# ============================================================================
+# EXISTING ROUTES (Keep your current implementation)
+# ============================================================================
 
 @router.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
@@ -393,7 +851,7 @@ def refresh_access_token(request: RefreshTokenRequest, db: Session = Depends(get
             "message": "Token refreshed successfully",
             "data": {
                 "access_token": new_access_token,
-                "refresh_token": new_refresh_token,  # Return new refresh token
+                "refresh_token": new_refresh_token,
                 "token_type": "bearer"
             }
         }
