@@ -13,5 +13,4 @@ email-validator==2.1.0
 python-dotenv==1.0.0
 alembic==1.13.1
 cloudinary==1.36.0
-brevo==1.2.0
 sib-api-v3-sdk==7.7.0
