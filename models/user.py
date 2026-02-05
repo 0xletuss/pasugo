@@ -21,7 +21,6 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     user_type = Column(Enum(UserType), nullable=False, index=True)
     address = Column(Text, nullable=True)
-    profile_photo_url = Column(String(500), nullable=True)  # Cloudinary URL for profile photo
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
