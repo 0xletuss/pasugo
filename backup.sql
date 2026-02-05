@@ -1,8 +1,8 @@
 -- MySQL dump 10.13  Distrib 8.0.36, for Win64 (x86_64)
 --
--- Host: crossover.proxy.rlwy.net    Database: railway
+-- Host: pasugodb-bayadpasugo.g.aivencloud.com    Database: defaultdb
 -- ------------------------------------------------------
--- Server version	9.4.0
+-- Server version	8.0.45
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -14,6 +14,14 @@
 /*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
+SET @MYSQLDUMP_TEMP_LOG_BIN = @@SESSION.SQL_LOG_BIN;
+SET @@SESSION.SQL_LOG_BIN= 0;
+
+--
+-- GTID state at the beginning of the backup 
+--
+
+SET @@GLOBAL.GTID_PURGED=/*!80000 '+'*/ '23382dad-023f-11f1-8526-529f966b7bab:1-227';
 
 --
 -- Table structure for table `admin_users`
@@ -25,7 +33,7 @@ DROP TABLE IF EXISTS `admin_users`;
 CREATE TABLE `admin_users` (
   `admin_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
-  `role` enum('super_admin','manager','support') COLLATE utf8mb4_unicode_ci DEFAULT 'support',
+  `role` enum('super_admin','manager','support') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'support',
   `permissions` json DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`admin_id`),
@@ -55,20 +63,20 @@ CREATE TABLE `bill_requests` (
   `request_id` int NOT NULL AUTO_INCREMENT,
   `customer_id` int NOT NULL,
   `rider_id` int DEFAULT NULL,
-  `biller_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `biller_category` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `account_number` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `biller_name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `biller_category` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `account_number` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `bill_amount` decimal(10,2) NOT NULL,
   `due_date` date DEFAULT NULL,
-  `bill_photo_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `request_status` enum('pending','assigned','payment_processing','completed','cancelled') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
-  `payment_method` enum('cash','gcash') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `bill_photo_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `request_status` enum('pending','assigned','payment_processing','completed','cancelled') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
+  `payment_method` enum('cash','gcash') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `service_fee` decimal(10,2) NOT NULL,
   `total_amount` decimal(10,2) NOT NULL,
-  `delivery_address` text COLLATE utf8mb4_unicode_ci NOT NULL,
-  `contact_number` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `delivery_address` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `contact_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `preferred_time` datetime DEFAULT NULL,
-  `special_instructions` text COLLATE utf8mb4_unicode_ci,
+  `special_instructions` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `completed_at` datetime DEFAULT NULL,
@@ -77,6 +85,7 @@ CREATE TABLE `bill_requests` (
   KEY `idx_rider_id` (`rider_id`),
   KEY `idx_request_status` (`request_status`),
   KEY `idx_created_at` (`created_at`),
+  KEY `idx_bill_photo_url` (`bill_photo_url`),
   CONSTRAINT `bill_requests_ibfk_1` FOREIGN KEY (`customer_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE,
   CONSTRAINT `bill_requests_ibfk_2` FOREIGN KEY (`rider_id`) REFERENCES `riders` (`rider_id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -101,10 +110,10 @@ DROP TABLE IF EXISTS `blocked_tokens`;
 CREATE TABLE `blocked_tokens` (
   `blocked_id` int NOT NULL AUTO_INCREMENT,
   `session_id` int DEFAULT NULL,
-  `token` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `token_type` enum('session','refresh','password_reset') COLLATE utf8mb4_unicode_ci DEFAULT 'session',
+  `token` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `token_type` enum('session','refresh','password_reset') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'session',
   `user_id` int NOT NULL,
-  `blocked_reason` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `blocked_reason` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `blocked_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `expires_at` datetime NOT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -139,11 +148,12 @@ CREATE TABLE `complaint_replies` (
   `reply_id` int NOT NULL AUTO_INCREMENT,
   `complaint_id` int NOT NULL,
   `admin_id` int DEFAULT NULL,
-  `reply_message` text COLLATE utf8mb4_unicode_ci NOT NULL,
-  `attachment_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `reply_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `attachment_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`reply_id`),
   KEY `idx_complaint_id` (`complaint_id`),
+  KEY `idx_reply_attachment_url` (`attachment_url`),
   CONSTRAINT `complaint_replies_ibfk_1` FOREIGN KEY (`complaint_id`) REFERENCES `complaints` (`complaint_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -168,11 +178,11 @@ CREATE TABLE `complaints` (
   `complaint_id` int NOT NULL AUTO_INCREMENT,
   `request_id` int NOT NULL,
   `customer_id` int NOT NULL,
-  `complaint_type` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `description` text COLLATE utf8mb4_unicode_ci NOT NULL,
-  `status` enum('open','in_progress','resolved','closed') COLLATE utf8mb4_unicode_ci DEFAULT 'open',
-  `attachment_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `complaint_type` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('open','in_progress','resolved','closed') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'open',
+  `attachment_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `resolved_at` datetime DEFAULT NULL,
   PRIMARY KEY (`complaint_id`),
@@ -180,6 +190,7 @@ CREATE TABLE `complaints` (
   KEY `customer_id` (`customer_id`),
   KEY `idx_status` (`status`),
   KEY `idx_complaint_type` (`complaint_type`),
+  KEY `idx_attachment_url` (`attachment_url`),
   CONSTRAINT `complaints_ibfk_1` FOREIGN KEY (`request_id`) REFERENCES `bill_requests` (`request_id`) ON DELETE CASCADE,
   CONSTRAINT `complaints_ibfk_2` FOREIGN KEY (`customer_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -205,9 +216,9 @@ CREATE TABLE `notifications` (
   `notification_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
   `request_id` int DEFAULT NULL,
-  `notification_type` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `message` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `notification_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `is_read` tinyint(1) DEFAULT '0',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `read_at` datetime DEFAULT NULL,
@@ -275,7 +286,7 @@ DROP TABLE IF EXISTS `password_reset_tokens`;
 CREATE TABLE `password_reset_tokens` (
   `reset_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
-  `reset_token` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `reset_token` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `is_used` tinyint(1) DEFAULT '0',
   `used_at` datetime DEFAULT NULL,
   `expires_at` datetime NOT NULL,
@@ -309,12 +320,12 @@ CREATE TABLE `payment_receipts` (
   `receipt_id` int NOT NULL AUTO_INCREMENT,
   `payment_id` int NOT NULL,
   `request_id` int NOT NULL,
-  `biller_receipt_number` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `receipt_photo_path` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `biller_receipt_number` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `receipt_photo_path` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `payment_date_from_biller` datetime DEFAULT NULL,
   `amount_paid` decimal(10,2) NOT NULL,
   `remaining_balance` decimal(10,2) DEFAULT NULL,
-  `rider_notes` text COLLATE utf8mb4_unicode_ci,
+  `rider_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `uploaded_by_rider_at` datetime NOT NULL,
   `verified_by_admin_at` datetime DEFAULT NULL,
   `is_verified` tinyint(1) DEFAULT '0',
@@ -353,10 +364,10 @@ CREATE TABLE `payments` (
   `bill_amount` decimal(10,2) NOT NULL,
   `service_fee` decimal(10,2) NOT NULL,
   `total_collected` decimal(10,2) NOT NULL,
-  `payment_method` enum('cash','gcash') COLLATE utf8mb4_unicode_ci NOT NULL,
-  `gcash_reference_number` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `gcash_receipt_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `payment_status` enum('pending','verified','completed','failed') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
+  `payment_method` enum('cash','gcash') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `gcash_reference_number` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `gcash_receipt_path` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `payment_status` enum('pending','verified','completed','failed') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
   `payment_date` datetime NOT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`payment_id`),
@@ -390,7 +401,7 @@ DROP TABLE IF EXISTS `rating_categories`;
 CREATE TABLE `rating_categories` (
   `category_rating_id` int NOT NULL AUTO_INCREMENT,
   `rating_id` int NOT NULL,
-  `category_name` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `category_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `category_rating` decimal(2,1) NOT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`category_rating_id`),
@@ -420,12 +431,12 @@ CREATE TABLE `rating_disputes` (
   `dispute_id` int NOT NULL AUTO_INCREMENT,
   `rating_id` int NOT NULL,
   `rider_id` int NOT NULL,
-  `dispute_reason` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `dispute_explanation` text COLLATE utf8mb4_unicode_ci NOT NULL,
-  `evidence_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `dispute_status` enum('pending','reviewed','resolved','dismissed') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
-  `admin_decision` text COLLATE utf8mb4_unicode_ci,
-  `resolution` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `dispute_reason` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `dispute_explanation` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `evidence_path` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `dispute_status` enum('pending','reviewed','resolved','dismissed') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
+  `admin_decision` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `resolution` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `resolved_at` datetime DEFAULT NULL,
   `submitted_at` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`dispute_id`),
@@ -458,12 +469,12 @@ CREATE TABLE `rating_flags` (
   `rating_id` int DEFAULT NULL,
   `feedback_id` int DEFAULT NULL,
   `rider_id` int NOT NULL,
-  `flag_reason` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `flag_description` text COLLATE utf8mb4_unicode_ci,
+  `flag_reason` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `flag_description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `flagged_by_admin` tinyint(1) DEFAULT '0',
   `flagged_by_rider` tinyint(1) DEFAULT '0',
-  `flag_status` enum('pending','reviewed','resolved','dismissed') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
-  `admin_notes` text COLLATE utf8mb4_unicode_ci,
+  `flag_status` enum('pending','reviewed','resolved','dismissed') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
+  `admin_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `resolved_at` datetime DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`flag_id`),
@@ -501,7 +512,7 @@ CREATE TABLE `rider_earnings` (
   `service_fee_earned` decimal(10,2) NOT NULL,
   `bonus` decimal(10,2) DEFAULT '0.00',
   `total_earned` decimal(10,2) NOT NULL,
-  `payout_status` enum('pending','released','paid') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
+  `payout_status` enum('pending','released','paid') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
   `earned_at` datetime NOT NULL,
   `payout_date` datetime DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -538,10 +549,10 @@ CREATE TABLE `rider_feedback` (
   `task_id` int NOT NULL,
   `rider_id` int NOT NULL,
   `customer_id` int NOT NULL,
-  `feedback_text` text COLLATE utf8mb4_unicode_ci NOT NULL,
-  `feedback_type` enum('positive','neutral','negative') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `feedback_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `feedback_type` enum('positive','neutral','negative') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `has_media` tinyint(1) DEFAULT '0',
-  `media_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `media_path` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `is_verified` tinyint(1) DEFAULT '0',
   `verified_by_admin_at` datetime DEFAULT NULL,
   `feedback_date` datetime NOT NULL,
@@ -580,13 +591,13 @@ DROP TABLE IF EXISTS `rider_improvement_tracking`;
 CREATE TABLE `rider_improvement_tracking` (
   `tracking_id` int NOT NULL AUTO_INCREMENT,
   `rider_id` int NOT NULL,
-  `tracking_period` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tracking_period` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `period_start_date` date NOT NULL,
   `period_end_date` date NOT NULL,
   `ratings_received_in_period` int DEFAULT '0',
   `average_rating_in_period` decimal(3,2) DEFAULT '0.00',
   `improvement_vs_previous_period` decimal(3,2) DEFAULT NULL,
-  `trend_status` enum('improving','declining','stable') COLLATE utf8mb4_unicode_ci DEFAULT 'stable',
+  `trend_status` enum('improving','declining','stable') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'stable',
   `positive_trend_indicators` json DEFAULT NULL,
   `areas_needing_improvement` json DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -697,14 +708,14 @@ CREATE TABLE `rider_tasks` (
   `task_id` int NOT NULL AUTO_INCREMENT,
   `request_id` int NOT NULL,
   `rider_id` int NOT NULL,
-  `task_type` enum('collect_payment','pay_bill','deliver_receipt') COLLATE utf8mb4_unicode_ci NOT NULL,
-  `task_status` enum('pending','accepted','in_progress','completed','failed') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
+  `task_type` enum('collect_payment','pay_bill','deliver_receipt') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `task_status` enum('pending','accepted','in_progress','completed','failed') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
   `assigned_at` datetime NOT NULL,
   `accepted_at` datetime DEFAULT NULL,
   `started_at` datetime DEFAULT NULL,
   `completed_at` datetime DEFAULT NULL,
-  `rider_location` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `task_notes` text COLLATE utf8mb4_unicode_ci,
+  `rider_location` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `task_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`task_id`),
   KEY `idx_task_status` (`task_status`),
@@ -734,18 +745,20 @@ DROP TABLE IF EXISTS `riders`;
 CREATE TABLE `riders` (
   `rider_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
-  `id_number` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `vehicle_type` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `license_plate` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `availability_status` enum('available','busy','offline','suspended') COLLATE utf8mb4_unicode_ci DEFAULT 'offline',
+  `id_number` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `vehicle_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `license_plate` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `availability_status` enum('available','busy','offline','suspended') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'offline',
   `rating` decimal(3,2) DEFAULT '0.00',
   `total_tasks_completed` int DEFAULT '0',
   `total_earnings` decimal(10,2) DEFAULT '0.00',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `id_document_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   PRIMARY KEY (`rider_id`),
   UNIQUE KEY `user_id` (`user_id`),
   KEY `idx_availability_status` (`availability_status`),
   KEY `idx_rating` (`rating`),
+  KEY `idx_id_document_url` (`id_document_url`),
   CONSTRAINT `riders_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -771,12 +784,12 @@ CREATE TABLE `transactions` (
   `request_id` int NOT NULL,
   `customer_id` int NOT NULL,
   `rider_id` int NOT NULL,
-  `biller_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `biller_name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `bill_amount` decimal(10,2) NOT NULL,
   `service_fee` decimal(10,2) NOT NULL,
   `total_amount` decimal(10,2) NOT NULL,
-  `payment_method` enum('cash','gcash') COLLATE utf8mb4_unicode_ci NOT NULL,
-  `transaction_status` enum('pending','completed','failed','refunded') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
+  `payment_method` enum('cash','gcash') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `transaction_status` enum('pending','completed','failed','refunded') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
   `transaction_date` datetime NOT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`transaction_id`),
@@ -811,12 +824,12 @@ CREATE TABLE `user_activity_log` (
   `activity_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
   `session_id` int DEFAULT NULL,
-  `activity_type` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `activity_description` text COLLATE utf8mb4_unicode_ci,
-  `ip_address` varchar(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `user_agent` text COLLATE utf8mb4_unicode_ci,
+  `activity_type` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `activity_description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `ip_address` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `user_agent` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `request_data` json DEFAULT NULL,
-  `response_status` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `response_status` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `timestamp` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`activity_id`),
   KEY `session_id` (`session_id`),
@@ -847,11 +860,11 @@ DROP TABLE IF EXISTS `user_devices`;
 CREATE TABLE `user_devices` (
   `device_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
-  `device_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `device_type` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `device_token` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `ip_address` varchar(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `user_agent` text COLLATE utf8mb4_unicode_ci,
+  `device_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `device_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `device_token` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ip_address` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `user_agent` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `is_trusted` tinyint(1) DEFAULT '0',
   `last_used` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -884,13 +897,13 @@ CREATE TABLE `user_login_history` (
   `login_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
   `login_timestamp` datetime DEFAULT CURRENT_TIMESTAMP,
-  `ip_address` varchar(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `device_type` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `device_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `browser_info` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `location` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `login_status` enum('success','failed','locked') COLLATE utf8mb4_unicode_ci DEFAULT 'success',
-  `failure_reason` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `ip_address` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `device_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `device_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `browser_info` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `location` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `login_status` enum('success','failed','locked') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'success',
+  `failure_reason` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `session_id` int DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`login_id`),
@@ -927,9 +940,9 @@ CREATE TABLE `user_preferences` (
   `push_notification_enabled` tinyint(1) DEFAULT '1',
   `email_notification_enabled` tinyint(1) DEFAULT '1',
   `sms_notification_enabled` tinyint(1) DEFAULT '0',
-  `app_theme` enum('light','dark') COLLATE utf8mb4_unicode_ci DEFAULT 'light',
-  `language` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'en',
-  `currency` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT 'PHP',
+  `app_theme` enum('light','dark') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'light',
+  `language` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'en',
+  `currency` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'PHP',
   `biometric_auth_enabled` tinyint(1) DEFAULT '0',
   `face_recognition_enabled` tinyint(1) DEFAULT '0',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -960,11 +973,11 @@ DROP TABLE IF EXISTS `user_sessions`;
 CREATE TABLE `user_sessions` (
   `session_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
-  `session_token` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `refresh_token` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `device_info` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `ip_address` varchar(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `user_agent` text COLLATE utf8mb4_unicode_ci,
+  `session_token` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `refresh_token` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `device_info` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `ip_address` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `user_agent` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `is_active` tinyint(1) DEFAULT '1',
   `last_activity` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `login_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -1001,20 +1014,22 @@ DROP TABLE IF EXISTS `users`;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `users` (
   `user_id` int NOT NULL AUTO_INCREMENT,
-  `full_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `email` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `phone_number` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `password_hash` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `user_type` enum('customer','rider','admin') COLLATE utf8mb4_unicode_ci NOT NULL,
-  `address` text COLLATE utf8mb4_unicode_ci,
+  `full_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `phone_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `password_hash` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_type` enum('customer','rider','admin') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `address` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `is_active` tinyint(1) DEFAULT '1',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `profile_photo_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   PRIMARY KEY (`user_id`),
   UNIQUE KEY `email` (`email`),
   KEY `idx_email` (`email`),
   KEY `idx_user_type` (`user_type`),
-  KEY `idx_is_active` (`is_active`)
+  KEY `idx_is_active` (`is_active`),
+  KEY `idx_profile_photo_url` (`profile_photo_url`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -1026,6 +1041,7 @@ LOCK TABLES `users` WRITE;
 /*!40000 ALTER TABLE `users` DISABLE KEYS */;
 /*!40000 ALTER TABLE `users` ENABLE KEYS */;
 UNLOCK TABLES;
+SET @@SESSION.SQL_LOG_BIN = @MYSQLDUMP_TEMP_LOG_BIN;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
@@ -1036,4 +1052,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-02-03 21:27:33
+-- Dump completed on 2026-02-05 20:40:51

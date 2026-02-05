@@ -1,12 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from typing import Optional
 from database import get_db
-from models.user import User
+from models.user import User, UserType
 from models.rider import Rider, RiderStatus
 from models.bill_request import BillRequest, RequestStatus
+from models.user_preference import UserPreference
 from utils.dependencies import get_current_active_user, require_role
+from utils.security import hash_password
+from utils.cloudinary_manager import CloudinaryManager
+from datetime import datetime
+import logging
+import re
+
+logger = logging.getLogger(__name__)
+cloudinary_manager = CloudinaryManager()
 
 router = APIRouter(prefix="/riders", tags=["Riders"])
 
@@ -28,7 +37,192 @@ class UpdateRiderStatusRequest(BaseModel):
     status: RiderStatus
 
 
-@router.post("/profile", status_code=status.HTTP_201_CREATED)
+# ============================================================================
+# RIDER REGISTRATION WITH FILE UPLOAD
+# ============================================================================
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+async def register_rider(
+    # User registration fields
+    full_name: str = Form(...),
+    email: str = Form(...),
+    phone_number: str = Form(...),
+    password: str = Form(...),
+    address: str = Form(...),
+    # Rider-specific fields
+    vehicle_type: str = Form(...),
+    vehicle_plate: str = Form(...),
+    license_number: str = Form(...),
+    id_number: str = Form(...),
+    service_zones: str = Form(""),
+    # Optional file upload
+    id_file: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db)
+):
+    """Register a new rider with optional ID document upload
+    
+    This endpoint:
+    1. Creates a new user account with user_type='rider'
+    2. Creates a rider profile linked to the user
+    3. Uploads ID document to Cloudinary if provided
+    4. Stores the Cloudinary URL in the rider profile
+    
+    Args:
+        full_name: Rider's full name
+        email: Valid email address
+        phone_number: Valid phone number
+        password: At least 8 characters
+        address: Rider's address
+        vehicle_type: Type of vehicle (e.g., 'motorcycle', 'tricycle', 'van')
+        vehicle_plate: Vehicle plate number
+        license_number: Driver's license number
+        id_number: National ID or identification number
+        service_zones: Comma-separated service zones (optional)
+        id_file: ID document file to upload (optional)
+    """
+    
+    try:
+        # Validate phone number format
+        phone_pattern = re.compile(r'^[0-9\s\-\+\(\)]{9,15}$')
+        if not phone_pattern.match(phone_number):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid phone number format"
+            )
+        
+        # Validate password strength
+        if len(password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters"
+            )
+        
+        # Validate full name length
+        if len(full_name) < 2 or len(full_name) > 100:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Full name must be between 2 and 100 characters"
+            )
+        
+        # Check if email already exists
+        existing_email = db.query(User).filter(User.email == email).first()
+        if existing_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Check if phone number already exists
+        existing_phone = db.query(User).filter(User.phone_number == phone_number).first()
+        if existing_phone:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Phone number already registered"
+            )
+        
+        # Check if id_number already exists for a rider
+        existing_id = db.query(Rider).filter(Rider.id_number == id_number).first()
+        if existing_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ID number already registered"
+            )
+        
+        # Create new user account
+        new_user = User(
+            full_name=full_name,
+            email=email,
+            phone_number=phone_number,
+            password_hash=hash_password(password),
+            user_type=UserType.rider,
+            address=address,
+            is_active=True,
+            created_at=datetime.utcnow()
+        )
+        
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        logger.info(f"Rider user account created: {new_user.email}")
+        
+        # Upload ID document to Cloudinary if provided
+        id_document_url = None
+        if id_file:
+            try:
+                # Set public_id to include rider info for organization
+                public_id = f"riders/{new_user.user_id}/id_document"
+                
+                # Upload file to Cloudinary
+                result = await cloudinary_manager.upload_file(
+                    file=id_file,
+                    public_id=public_id,
+                    folder="pasugo/riders/id_documents"
+                )
+                
+                id_document_url = result.get("secure_url")
+                logger.info(f"ID document uploaded to Cloudinary for rider {new_user.user_id}")
+            except Exception as e:
+                logger.error(f"Failed to upload ID document to Cloudinary: {str(e)}")
+                # Don't fail registration if upload fails, but log the error
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to upload ID document: {str(e)}"
+                )
+        
+        # Create rider profile
+        new_rider = Rider(
+            user_id=new_user.user_id,
+            id_number=id_number,
+            vehicle_type=vehicle_type,
+            vehicle_plate=vehicle_plate,
+            license_number=license_number,
+            id_document_url=id_document_url,
+            availability_status=RiderStatus.offline
+        )
+        
+        db.add(new_rider)
+        
+        # Create default user preferences
+        user_pref = UserPreference(user_id=new_user.user_id)
+        db.add(user_pref)
+        
+        db.commit()
+        db.refresh(new_rider)
+        
+        logger.info(f"Rider profile created: {new_rider.rider_id}")
+        
+        return {
+            "success": True,
+            "message": "Rider registered successfully",
+            "data": {
+                "user_id": new_user.user_id,
+                "rider_id": new_rider.rider_id,
+                "email": new_user.email,
+                "full_name": new_user.full_name,
+                "phone_number": new_user.phone_number,
+                "vehicle_type": new_rider.vehicle_type,
+                "id_document_url": id_document_url,
+                "user_type": "rider"
+            }
+        }
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error during rider registration: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to register rider: {str(e)}"
+        )
+
+
+# ============================================================================
+# EXISTING RIDER PROFILE ENDPOINTS
+# ============================================================================
+
 def create_rider_profile(
     request: CreateRiderProfileRequest,
     current_user: User = Depends(get_current_active_user),

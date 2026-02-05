@@ -20,7 +20,8 @@ class Rider(Base):
     id_number = Column(String(50), nullable=False, unique=True)
     id_document_url = Column(String(500), nullable=True)  # Cloudinary URL for ID document
     vehicle_type = Column(String(50), nullable=True)
-    license_plate = Column(String(50), nullable=True)
+    vehicle_plate = Column(String(50), nullable=True)
+    license_number = Column(String(50), nullable=True)  # Driver's license number
     availability_status = Column(Enum(RiderStatus), default=RiderStatus.offline, index=True)
     rating = Column(DECIMAL(3, 2), default=0.00, index=True)
     total_tasks_completed = Column(Integer, default=0)
