@@ -10,15 +10,15 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
     
-    # Database Settings
-    DB_HOST: str = os.getenv("DB_HOST", "crossover.proxy.rlwy.net")
-    DB_PORT: int = int(os.getenv("DB_PORT", "32100"))
-    DB_USER: str = os.getenv("DB_USER", "root")
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "ycxutwYCeKTxYSLJMQsRSPUTKjKzYPkC")
-    DB_NAME: str = os.getenv("DB_NAME", "railway")
+    # Database Settings - Aiven
+    DB_HOST: str = os.getenv("DB_HOST", "pasugodb-bayadpasugo.g.aivencloud.com")
+    DB_PORT: int = int(os.getenv("DB_PORT", "17013"))
+    DB_USER: str = os.getenv("DB_USER", "avnadmin")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "za$Snb4@&p8SiHe8A4{W]#WBr7c77li)")
+    DB_NAME: str = os.getenv("DB_NAME", "defaultdb")
     
     # JWT Settings
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "pasugo-secret-key-2026-aiven-migration-production")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
