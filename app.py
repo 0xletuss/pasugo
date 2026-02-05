@@ -78,6 +78,30 @@ def health_check():
     }
 
 
+@app.get("/health/db")
+def health_check_db():
+    """Check database connectivity"""
+    try:
+        from database import get_db
+        from sqlalchemy.orm import Session
+        db = next(get_db())
+        # Try a simple query
+        db.execute("SELECT 1")
+        return {
+            "success": True,
+            "message": "Database connection successful",
+            "status": "ok"
+        }
+    except Exception as e:
+        logger.error(f"Database connection error: {str(e)}", exc_info=True)
+        return {
+            "success": False,
+            "message": "Database connection failed",
+            "error": str(e),
+            "status": "error"
+        }
+
+
 # Include routers with /api prefix
 app.include_router(auth_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
