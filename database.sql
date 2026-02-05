@@ -21,7 +21,7 @@ SET @@SESSION.SQL_LOG_BIN= 0;
 -- GTID state at the beginning of the backup 
 --
 
-SET @@GLOBAL.GTID_PURGED=/*!80000 '+'*/ '23382dad-023f-11f1-8526-529f966b7bab:1-227';
+SET @@GLOBAL.GTID_PURGED=/*!80000 '+'*/ '23382dad-023f-11f1-8526-529f966b7bab:1-228';
 
 --
 -- Table structure for table `admin_users`
@@ -748,6 +748,7 @@ CREATE TABLE `riders` (
   `id_number` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `vehicle_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `license_plate` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `license_number` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `availability_status` enum('available','busy','offline','suspended') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'offline',
   `rating` decimal(3,2) DEFAULT '0.00',
   `total_tasks_completed` int DEFAULT '0',
@@ -759,6 +760,7 @@ CREATE TABLE `riders` (
   KEY `idx_availability_status` (`availability_status`),
   KEY `idx_rating` (`rating`),
   KEY `idx_id_document_url` (`id_document_url`),
+  KEY `idx_license_number` (`license_number`),
   CONSTRAINT `riders_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1052,4 +1054,4 @@ SET @@SESSION.SQL_LOG_BIN = @MYSQLDUMP_TEMP_LOG_BIN;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-02-05 20:40:51
+-- Dump completed on 2026-02-05 21:19:39

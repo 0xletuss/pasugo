@@ -146,29 +146,9 @@ async def register_rider(
         
         logger.info(f"Rider user account created: {new_user.email}")
         
-        # Upload ID document to Cloudinary if provided
-        id_document_url = None
+        # Note: File upload optional - files can be uploaded separately after registration
         if id_file:
-            try:
-                # Set public_id to include rider info for organization
-                public_id = f"riders/{new_user.user_id}/id_document"
-                
-                # Upload file to Cloudinary
-                result = await cloudinary_manager.upload_file(
-                    file=id_file,
-                    public_id=public_id,
-                    folder="pasugo/riders/id_documents"
-                )
-                
-                id_document_url = result.get("secure_url")
-                logger.info(f"ID document uploaded to Cloudinary for rider {new_user.user_id}")
-            except Exception as e:
-                logger.error(f"Failed to upload ID document to Cloudinary: {str(e)}")
-                # Don't fail registration if upload fails, but log the error
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to upload ID document: {str(e)}"
-                )
+            logger.info(f"ID file provided: {id_file.filename} - can be uploaded via /api/uploads/rider-id endpoint")
         
         # Create rider profile
         new_rider = Rider(
@@ -177,7 +157,6 @@ async def register_rider(
             vehicle_type=vehicle_type,
             vehicle_plate=vehicle_plate,
             license_number=license_number,
-            id_document_url=id_document_url,
             availability_status=RiderStatus.offline
         )
         
@@ -202,7 +181,6 @@ async def register_rider(
                 "full_name": new_user.full_name,
                 "phone_number": new_user.phone_number,
                 "vehicle_type": new_rider.vehicle_type,
-                "id_document_url": id_document_url,
                 "user_type": "rider"
             }
         }
