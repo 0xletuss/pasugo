@@ -27,10 +27,11 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
 
 
@@ -66,14 +67,14 @@ def health_check():
     }
 
 
-# Include routers
-app.include_router(auth_router)
-app.include_router(users_router)
-app.include_router(bill_requests_router)
-app.include_router(riders_router)
-app.include_router(complaints_router)
-app.include_router(notifications_router)
-app.include_router(payments_router)
+# Include routers with /api prefix
+app.include_router(auth_router, prefix="/api")
+app.include_router(users_router, prefix="/api")
+app.include_router(bill_requests_router, prefix="/api")
+app.include_router(riders_router, prefix="/api")
+app.include_router(complaints_router, prefix="/api")
+app.include_router(notifications_router, prefix="/api")
+app.include_router(payments_router, prefix="/api")
 
 
 # Startup event
