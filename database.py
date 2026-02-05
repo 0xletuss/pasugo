@@ -1,6 +1,9 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from config import Settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Initialize settings
 settings = Settings()
@@ -14,7 +17,8 @@ engine = create_engine(
     echo=settings.DEBUG,
     pool_pre_ping=True,
     pool_size=10,
-    max_overflow=20
+    max_overflow=20,
+    connect_args={"connect_timeout": 10}
 )
 
 # Create session factory
@@ -45,7 +49,13 @@ def init_db():
     """
     Create all database tables
     """
-    Base.metadata.create_all(bind=engine)
+    try:
+        logger.info("Creating database tables...")
+        Base.metadata.create_all(bind=engine)
+        logger.info("✅ Database tables created successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to create database tables: {str(e)}", exc_info=True)
+        raise
 
 
 # Function to check database connection
@@ -55,8 +65,9 @@ def check_db_connection():
     """
     try:
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))
+            logger.info("✅ Database connection successful")
             return True
     except Exception as e:
-        print(f"Database connection failed: {e}")
+        logger.error(f"❌ Database connection failed: {e}")
         return False

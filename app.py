@@ -118,6 +118,16 @@ def startup_event():
     logger.info(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} is starting...")
     logger.info(f"📚 Documentation available at: /docs")
     logger.info(f"🔗 Database: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
+    
+    # Initialize database tables
+    try:
+        from database import init_db
+        logger.info("📊 Initializing database tables...")
+        init_db()
+        logger.info("✅ Database tables initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {str(e)}", exc_info=True)
+    
     logger.info("✅ API ready to receive requests")
     print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} is starting...")
     print(f"📚 Documentation available at: /docs")
