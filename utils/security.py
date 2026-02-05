@@ -15,18 +15,15 @@ def hash_password(password: str) -> str:
     Bcrypt has a maximum password length of 72 bytes.
     Passwords longer than 72 bytes are truncated.
     """
-    # Truncate password to 72 bytes (bcrypt limit)
-    if isinstance(password, str):
-        password = password.encode('utf-8')
+    # Convert to bytes first
+    password_bytes = password.encode('utf-8')
     
-    if len(password) > 72:
-        password = password[:72]
+    # Truncate to 72 bytes (bcrypt limit)
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
     
-    # Convert back to string if needed
-    if isinstance(password, bytes):
-        password = password.decode('utf-8')
-    
-    return pwd_context.hash(password)
+    # Hash the bytes directly - passlib accepts bytes
+    return pwd_context.hash(password_bytes)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -35,22 +32,14 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Bcrypt has a maximum password length of 72 bytes.
     Passwords longer than 72 bytes are truncated for verification.
     """
-    # Truncate password to 72 bytes (bcrypt limit) - must match hashing behavior
-    if isinstance(plain_password, str):
-        password_bytes = plain_password.encode('utf-8')
-    else:
-        password_bytes = plain_password
+    # Convert to bytes and truncate to 72 bytes (must match hashing behavior)
+    password_bytes = plain_password.encode('utf-8')
     
     if len(password_bytes) > 72:
         password_bytes = password_bytes[:72]
     
-    # Convert back to string if needed
-    if isinstance(password_bytes, bytes):
-        plain_password = password_bytes.decode('utf-8')
-    else:
-        plain_password = password_bytes
-    
-    return pwd_context.verify(plain_password, hashed_password)
+    # Verify using bytes
+    return pwd_context.verify(password_bytes, hashed_password)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
