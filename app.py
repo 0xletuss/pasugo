@@ -79,23 +79,27 @@ app.include_router(payments_router, prefix="/api")
 
 # Startup event
 @app.on_event("startup")
-async def startup_event():
+def startup_event():
     print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} is starting...")
-    print(f"📚 Documentation available at: http://localhost:8000/docs")
+    print(f"📚 Documentation available at: /docs")
     print(f"🔗 Database: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
+    print("✅ API ready to receive requests")
 
 
 # Shutdown event
 @app.on_event("shutdown")
-async def shutdown_event():
+def shutdown_event():
     print("👋 Shutting down Pasugo API...")
 
 
 # Run the application
 if __name__ == "__main__":
+    import os
+    port = int(os.getenv("PORT", "8000"))
     uvicorn.run(
         "app:app",
         host="0.0.0.0",
-        port=10000,
-        reload=settings.DEBUG
+        port=port,
+        reload=settings.DEBUG,
+        log_level="info"
     )

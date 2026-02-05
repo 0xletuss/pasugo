@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: pasugo-api
+    runtime: python
+    pythonVersion: "3.12"
+    
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    
+    envVars:
+      - key: DEBUG
+        value: "False"
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+    
+    healthCheckPath: /
+    healthCheckStartupTimeout: 300
+    
+    autoDeploy: true
