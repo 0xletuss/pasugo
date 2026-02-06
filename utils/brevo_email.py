@@ -4,26 +4,54 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
+# DIAGNOSTIC LOGGING
+logger.info("=" * 70)
+logger.info("BREVO EMAIL MODULE - INITIALIZATION CHECK")
+logger.info("=" * 70)
+
+brevo_api_key = os.getenv("BREVO_API_KEY")
+sender_email = os.getenv("SENDER_EMAIL")
+sender_name = os.getenv("SENDER_NAME")
+
+logger.info(f"BREVO_API_KEY exists: {bool(brevo_api_key)}")
+if brevo_api_key:
+    logger.info(f"BREVO_API_KEY starts with: {brevo_api_key[:15]}...")
+    logger.info(f"BREVO_API_KEY length: {len(brevo_api_key)} characters")
+else:
+    logger.error("❌ BREVO_API_KEY is NOT SET!")
+
+logger.info(f"SENDER_EMAIL: {sender_email or 'NOT SET'}")
+logger.info(f"SENDER_NAME: {sender_name or 'NOT SET'}")
+logger.info("=" * 70)
+
 
 class BrevoEmailSender:
     """Handles all Brevo email sending operations for FastAPI"""
     
     def __init__(self):
         """Initialize Brevo API configuration"""
+        logger.info("Initializing BrevoEmailSender class...")
+        
         try:
+            logger.info("Attempting to import sib_api_v3_sdk...")
             from sib_api_v3_sdk import ApiClient, Configuration
             from sib_api_v3_sdk.apis.transactional_emails_api import TransactionalEmailsApi
             from sib_api_v3_sdk.models.send_smtp_email import SendSmtpEmail
+            logger.info("✅ sib_api_v3_sdk imported successfully")
         except ImportError as e:
-            logger.error(f"Failed to import sib_api_v3_sdk: {e}")
+            logger.error(f"❌ Failed to import sib_api_v3_sdk: {e}")
             raise
         
         api_key = os.getenv("BREVO_API_KEY")
         
         if not api_key:
+            logger.error("❌ BREVO_API_KEY not found in environment variables")
             raise ValueError("BREVO_API_KEY not found in environment variables")
         
+        logger.info(f"✅ BREVO_API_KEY found (length: {len(api_key)})")
+        
         # Configure Brevo API client
+        logger.info("Configuring Brevo API client...")
         configuration = Configuration()
         configuration.api_key["api-key"] = api_key
         
@@ -33,6 +61,9 @@ class BrevoEmailSender:
         
         self.sender_email = os.getenv("SENDER_EMAIL", "bayadpasugo@gmail.com")
         self.sender_name = os.getenv("SENDER_NAME", "Pasugo App")
+        
+        logger.info(f"✅ Brevo API configured successfully")
+        logger.info(f"✅ Sender: {self.sender_name} <{self.sender_email}>")
     
     def send_registration_otp(self, recipient_email: str, otp_code: str) -> Dict[str, Any]:
         """Send OTP email for registration"""
@@ -102,9 +133,10 @@ class BrevoEmailSender:
             )
             
             # Send email via Brevo API
+            logger.info(f"Sending {email_type} OTP to {recipient_email}...")
             response = self.api_instance.send_transac_email(send_smtp_email)
             
-            logger.info(f"✓ OTP email sent successfully to {recipient_email} (Type: {email_type})")
+            logger.info(f"✅ OTP email sent successfully to {recipient_email} (Type: {email_type})")
             
             return {
                 "success": True,
@@ -113,7 +145,7 @@ class BrevoEmailSender:
             }
         
         except Exception as e:
-            logger.error(f"✗ Error sending OTP email to {recipient_email}: {str(e)}", exc_info=True)
+            logger.error(f"❌ Error sending OTP email to {recipient_email}: {str(e)}", exc_info=True)
             return {
                 "success": False,
                 "message": "Failed to send OTP",
@@ -244,8 +276,23 @@ class BrevoEmailSender:
 
 
 # Create singleton instance
+logger.info("Attempting to create BrevoEmailSender singleton instance...")
 try:
     brevo_sender = BrevoEmailSender()
+    logger.info("✅✅✅ SUCCESS: Brevo Email Service initialized and ready!")
+except ValueError as e:
+    logger.error(f"❌ Configuration Error: {e}")
+    brevo_sender = None
+except ImportError as e:
+    logger.error(f"❌ Import Error: {e}")
+    brevo_sender = None
 except Exception as e:
-    logger.error(f"Failed to initialize BrevoEmailSender: {e}")
-    brevo_sender = None 
+    logger.error(f"❌ Unexpected Error: {type(e).__name__}: {str(e)}", exc_info=True)
+    brevo_sender = None
+
+if brevo_sender is None:
+    logger.warning("⚠️⚠️⚠️ Brevo Email Service is DISABLED - OTPs will only be logged to console")
+else:
+    logger.info("📧📧📧 Brevo Email Service is ACTIVE and ready to send emails")
+
+logger.info("=" * 70)
