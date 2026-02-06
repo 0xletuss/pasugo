@@ -254,7 +254,6 @@ async def get_current_user(
 # ============================================================================
 # REGISTRATION OTP ROUTES
 # ============================================================================
-
 @router.post("/register/request-otp", status_code=status.HTTP_200_OK)
 def register_request_otp(request: RegisterOTPRequest, db: Session = Depends(get_db)):
     """
@@ -280,13 +279,20 @@ def register_request_otp(request: RegisterOTPRequest, db: Session = Depends(get_
         otp_code = otp_manager.generate_otp()
         expires_at = otp_manager.get_expiry_time()
         
-        # Create OTP record in database (no user_id yet for registration)
-        # We'll use user_id=0 as a placeholder for registration OTPs
+        # Delete any existing unverified registration OTPs (cleanup)
+        db.query(OTP).filter(
+            OTP.otp_type == OTPType.registration,
+            OTP.phone_number == email,  # Email is stored here for registration
+            OTP.is_verified == False
+        ).delete()
+        db.flush()
+        
+        # Create OTP record with NULL user_id and email in phone_number field
         new_otp = OTP(
-            user_id=0,  # Placeholder for registration flow
+            user_id=None,  # ✅ NULL for registration OTPs
             otp_code=otp_code,
             otp_type=OTPType.registration,
-            phone_number="",
+            phone_number=email,  # ✅ Store email here for registration
             expires_at=expires_at,
             is_verified=False,
             attempts=0
@@ -295,7 +301,7 @@ def register_request_otp(request: RegisterOTPRequest, db: Session = Depends(get_
         db.commit()
         
         # Send OTP via Brevo (only if configured)
-        if brevo_sender:  # ✅ Check if brevo_sender exists
+        if brevo_sender:
             result = brevo_sender.send_registration_otp(email, otp_code)
             
             if not result['success']:
@@ -317,12 +323,12 @@ def register_request_otp(request: RegisterOTPRequest, db: Session = Depends(get_
         raise
     except Exception as e:
         logger.error(f"Registration OTP request error: {str(e)}", exc_info=True)
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to process request. Please try again."
         )
-
-
+    
 @router.post("/register/verify-otp", status_code=status.HTTP_201_CREATED)
 def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Depends(get_db)):
     """
@@ -350,9 +356,11 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
                 detail="Email already registered"
             )
         
-        # Get latest OTP for this email
+        # Get latest OTP for this email (email is stored in phone_number field)
         otp = db.query(OTP).filter(
-            OTP.otp_type == OTPType.registration
+            OTP.otp_type == OTPType.registration,
+            OTP.phone_number == email,  # ✅ Query by email stored in phone_number
+            OTP.is_verified == False
         ).order_by(OTP.created_at.desc()).first()
         
         if not otp:
@@ -412,6 +420,9 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
         # Create default user preferences
         user_pref = UserPreference(user_id=new_user.user_id)
         db.add(user_pref)
+        
+        # Delete the used OTP
+        db.delete(otp)
         db.commit()
         
         logger.info(f"User registered successfully: {email}")
@@ -436,7 +447,7 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed. Please try again."
         )
-
+    
 
 # ============================================================================
 # FORGOT PASSWORD OTP ROUTES
@@ -634,24 +645,27 @@ def resend_otp(request: ResendOTPRequest, db: Session = Depends(get_db)):
         new_expires_at = otp_manager.get_expiry_time()
         
         if otp_type_str == "registration":
-            # Delete existing registration OTP
+            # Delete existing registration OTP for this email
             db.query(OTP).filter(
-                OTP.otp_type == OTPType.registration
+                OTP.otp_type == OTPType.registration,
+                OTP.phone_number == email,  # ✅ Email stored in phone_number
+                OTP.is_verified == False
             ).delete()
+            db.flush()
             
             # Create new registration OTP
             new_otp = OTP(
-                user_id=0,
+                user_id=None,  # ✅ NULL for registration
                 otp_code=new_otp_code,
                 otp_type=OTPType.registration,
-                phone_number="",
+                phone_number=email,  # ✅ Store email here
                 expires_at=new_expires_at,
                 is_verified=False,
                 attempts=0
             )
             
             # Send OTP via Brevo (only if configured)
-            if brevo_sender:  # ✅ Check if brevo_sender exists
+            if brevo_sender:
                 result = brevo_sender.send_registration_otp(email, new_otp_code)
                 if not result['success']:
                     logger.warning(f"Failed to resend registration OTP to: {email}")
@@ -674,6 +688,7 @@ def resend_otp(request: ResendOTPRequest, db: Session = Depends(get_db)):
                 OTP.user_id == user.user_id,
                 OTP.otp_type == OTPType.password_reset
             ).delete()
+            db.flush()
             
             # Create new password reset OTP
             new_otp = OTP(
@@ -687,7 +702,7 @@ def resend_otp(request: ResendOTPRequest, db: Session = Depends(get_db)):
             )
             
             # Send OTP via Brevo (only if configured)
-            if brevo_sender:  # ✅ Check if brevo_sender exists
+            if brevo_sender:
                 result = brevo_sender.send_password_reset_otp(email, new_otp_code)
                 if not result['success']:
                     logger.warning(f"Failed to resend password reset OTP to: {email}")
