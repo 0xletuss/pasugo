@@ -110,7 +110,7 @@ class BrevoEmailSender:
         email_type: str,
         phone_number: str = None
     ) -> Dict[str, Any]:
-        """Internal method to send OTP email"""
+        """Internal method to send OTP yup"""
         
         try:
             # Create HTML content based on email type
