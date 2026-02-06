@@ -34,9 +34,8 @@ class BrevoEmailSender:
         
         try:
             logger.info("Attempting to import sib_api_v3_sdk...")
-            from sib_api_v3_sdk import ApiClient, Configuration
-            from sib_api_v3_sdk.apis.transactional_emails_api import TransactionalEmailsApi
-            from sib_api_v3_sdk.models.send_smtp_email import SendSmtpEmail
+            from sib_api_v3_sdk import ApiClient, Configuration, TransactionalEmailsApi
+            from sib_api_v3_sdk import SendSmtpEmail
             logger.info("✅ sib_api_v3_sdk imported successfully")
         except ImportError as e:
             logger.error(f"❌ Failed to import sib_api_v3_sdk: {e}")
