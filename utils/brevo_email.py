@@ -248,4 +248,4 @@ try:
     brevo_sender = BrevoEmailSender()
 except Exception as e:
     logger.error(f"Failed to initialize BrevoEmailSender: {e}")
-    brevo_sender = None
+    brevo_sender = None 
