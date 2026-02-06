@@ -121,6 +121,24 @@ def startup_event():
     logger.info(f"📚 Documentation available at: /docs")
     logger.info(f"🔗 Database: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
     
+    # Initialize Brevo Email Service
+    logger.info("=" * 70)
+    logger.info("📧 CHECKING EMAIL SERVICE CONFIGURATION...")
+    logger.info("=" * 70)
+    try:
+        from utils.brevo_email import brevo_sender
+        if brevo_sender:
+            logger.info("✅✅✅ Brevo Email Service is configured and ready!")
+            logger.info("📧 OTP emails will be sent via Brevo")
+        else:
+            logger.warning("⚠️⚠️⚠️ Brevo Email Service is NOT configured!")
+            logger.warning("📝 OTPs will only be logged to console (not sent via email)")
+            logger.warning("🔧 Please check your BREVO_API_KEY environment variable")
+    except Exception as e:
+        logger.error(f"❌ Failed to load Brevo Email Service: {str(e)}", exc_info=True)
+        logger.warning("📝 OTPs will only be logged to console")
+    logger.info("=" * 70)
+    
     # Initialize database tables
     try:
         from database import init_db
@@ -131,15 +149,21 @@ def startup_event():
         logger.error(f"❌ Database initialization failed: {str(e)}", exc_info=True)
     
     logger.info("✅ API ready to receive requests")
+    logger.info("=" * 70)
+    
+    # Console output for easy visibility
+    print("\n" + "=" * 70)
     print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} is starting...")
     print(f"📚 Documentation available at: /docs")
     print(f"🔗 Database: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
     print("✅ API ready to receive requests")
+    print("=" * 70 + "\n")
 
 
 # Shutdown event
 @app.on_event("shutdown")
 def shutdown_event():
+    logger.info("👋 Shutting down Pasugo API...")
     print("👋 Shutting down Pasugo API...")
 
 
