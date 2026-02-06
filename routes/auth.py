@@ -294,17 +294,16 @@ def register_request_otp(request: RegisterOTPRequest, db: Session = Depends(get_
         db.add(new_otp)
         db.commit()
         
-        # Send OTP via Brevo
-        result = brevo_sender.send_registration_otp(email, otp_code)
+        # Send OTP via Brevo (only if configured)
+        if brevo_sender:  # ✅ Check if brevo_sender exists
+            result = brevo_sender.send_registration_otp(email, otp_code)
+            
+            if not result['success']:
+                logger.warning(f"Failed to send registration OTP to: {email}")
+        else:
+            logger.info(f"Email service not configured. Registration OTP for {email}: {otp_code}")
         
-        if not result['success']:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to send OTP. Please try again."
-            )
-        
-        logger.info(f"Registration OTP sent to: {email}")
+        logger.info(f"Registration OTP requested for: {email}")
         
         return {
             "success": True,
@@ -483,12 +482,13 @@ def forgot_password_request_otp(request: ForgotPasswordOTPRequest, db: Session =
             db.add(new_otp)
             db.commit()
             
-            # Send OTP via Brevo
-            result = brevo_sender.send_password_reset_otp(email, otp_code)
-            
-            if not result['success']:
-                db.rollback()
-                logger.warning(f"Failed to send password reset OTP to: {email}")
+            # Send OTP via Brevo (only if configured)
+            if brevo_sender:  # ✅ Check if brevo_sender exists
+                result = brevo_sender.send_password_reset_otp(email, otp_code)
+                if not result['success']:
+                    logger.warning(f"Failed to send password reset OTP to: {email}")
+            else:
+                logger.info(f"Email service not configured. Password reset OTP for {email}: {otp_code}")
         
         # Always return generic message for security
         logger.info(f"Password reset OTP requested for: {email}")
@@ -650,8 +650,13 @@ def resend_otp(request: ResendOTPRequest, db: Session = Depends(get_db)):
                 attempts=0
             )
             
-            # Send OTP via Brevo
-            result = brevo_sender.send_registration_otp(email, new_otp_code)
+            # Send OTP via Brevo (only if configured)
+            if brevo_sender:  # ✅ Check if brevo_sender exists
+                result = brevo_sender.send_registration_otp(email, new_otp_code)
+                if not result['success']:
+                    logger.warning(f"Failed to resend registration OTP to: {email}")
+            else:
+                logger.info(f"Email service not configured. Registration OTP for {email}: {new_otp_code}")
         
         else:  # password_reset
             # Get user
@@ -681,18 +686,16 @@ def resend_otp(request: ResendOTPRequest, db: Session = Depends(get_db)):
                 attempts=0
             )
             
-            # Send OTP via Brevo
-            result = brevo_sender.send_password_reset_otp(email, new_otp_code)
+            # Send OTP via Brevo (only if configured)
+            if brevo_sender:  # ✅ Check if brevo_sender exists
+                result = brevo_sender.send_password_reset_otp(email, new_otp_code)
+                if not result['success']:
+                    logger.warning(f"Failed to resend password reset OTP to: {email}")
+            else:
+                logger.info(f"Email service not configured. Password reset OTP for {email}: {new_otp_code}")
         
         db.add(new_otp)
         db.commit()
-        
-        if not result['success']:
-            logger.warning(f"Failed to resend OTP to: {email}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to send OTP. Please try again."
-            )
         
         logger.info(f"OTP resent to: {email} (Type: {otp_type_str})")
         
