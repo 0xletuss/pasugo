@@ -3,7 +3,7 @@ routes/locations.py - User Location and Available Riders Routes (FastAPI)
 Handles location tracking and displaying available riders on customer map
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Header
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel, Field
@@ -12,39 +12,11 @@ from decimal import Decimal
 
 from database import get_db
 from sqlalchemy.orm import Session
+from routes.auth import get_current_user
+from models.user import User
 
 # Create router
 router = APIRouter(prefix="/locations", tags=["locations"])
-
-
-# ============================================
-# AUTHENTICATION DEPENDENCY
-# ============================================
-
-async def get_current_user_from_token(authorization: str = Header(None)):
-    """Extract and validate JWT token from Authorization header"""
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Authorization header missing")
-    
-    try:
-        # Extract token from "Bearer <token>"
-        scheme, token = authorization.split()
-        if scheme.lower() != "bearer":
-            raise HTTPException(status_code=401, detail="Invalid authentication scheme")
-        
-        # Decode and validate token
-        from utils.security import decode_access_token
-        payload = decode_access_token(token)
-        
-        if not payload:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-        
-        return payload
-        
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid authorization header format")
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
 
 
 # ============================================
@@ -91,14 +63,14 @@ def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 async def update_location(
     location: LocationUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Update user's current location
     Called by both customers and riders to share location
     """
     try:
-        user_id = current_user["user_id"]
+        user_id = current_user.user_id
         
         # Check if location exists for this user (within last hour)
         existing = db.execute(
@@ -174,7 +146,7 @@ async def get_available_riders(
     radius: float = Query(20, ge=1, le=100, description="Search radius in km"),
     limit: int = Query(50, ge=1, le=200, description="Maximum riders to return"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get all available riders with their locations
@@ -263,7 +235,7 @@ async def get_nearby_riders(
     radius: float = Query(5, ge=1, le=100, description="Search radius in km"),
     status: str = Query("available", description="Availability status"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """Get riders within a specific radius and availability status"""
     try:
@@ -349,7 +321,7 @@ async def get_nearby_riders(
 async def get_rider_location(
     rider_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """Get a specific rider's location with details"""
     try:
@@ -411,12 +383,12 @@ async def get_rider_location(
 async def get_user_location(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user_from_token)
+    current_user: User = Depends(get_current_user)
 ):
     """Get a user's latest location"""
     try:
         # Authorization: can view own location or admin
-        if current_user["user_id"] != user_id and current_user.get("user_type") != "admin":
+        if current_user.user_id != user_id and str(current_user.user_type) != "admin":
             raise HTTPException(status_code=403, detail="Unauthorized")
 
         row = db.execute(
