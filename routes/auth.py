@@ -15,6 +15,7 @@ from utils.security import (
 )
 from utils.brevo_email import brevo_sender
 from utils.otp_manager import otp_manager
+from models.rider import Rider, RiderStatus
 from datetime import timedelta, datetime
 from typing import Optional
 import logging
@@ -339,7 +340,7 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
     - **full_name**: User's full name
     - **phone_number**: User's phone number
     - **password**: User's password (min 8 characters)
-    - **user_type**: 'customer' or 'vendor'
+    - **user_type**: 'customer' or 'rider'
     - **address**: Optional address
     
     Creates user account after successful OTP verification.
@@ -420,6 +421,35 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
         # Create default user preferences
         user_pref = UserPreference(user_id=new_user.user_id)
         db.add(user_pref)
+        db.commit()
+        
+        # ✅ NEW: If user is a rider, create rider record
+        if request.user_type == UserType.rider:
+            logger.info(f"Creating rider profile for user: {email}")
+            
+            # Generate a temporary ID number if not provided
+            # Format: RIDER-{user_id}-{timestamp}
+            temp_id_number = f"RIDER-{new_user.user_id}-{int(datetime.utcnow().timestamp())}"
+            
+            new_rider = Rider(
+                user_id=new_user.user_id,
+                id_number=temp_id_number,  # Required field
+                id_document_url=None,  # Can be uploaded later
+                vehicle_type='motorcycle',  # Default, can be updated later
+                vehicle_plate=None,  # Can be updated later
+                license_number=None,  # Can be updated later
+                availability_status=RiderStatus.offline,  # Default to offline
+                rating=0.00,
+                total_tasks_completed=0,
+                total_earnings=0.00,
+                created_at=datetime.utcnow()
+            )
+            
+            db.add(new_rider)
+            db.commit()
+            db.refresh(new_rider)
+            
+            logger.info(f"Rider profile created successfully for user: {email} (rider_id: {new_rider.rider_id})")
         
         # Delete the used OTP
         db.delete(otp)
@@ -427,15 +457,23 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
         
         logger.info(f"User registered successfully: {email}")
         
+        response_data = {
+            "user_id": new_user.user_id,
+            "email": new_user.email,
+            "full_name": new_user.full_name,
+            "user_type": new_user.user_type.value if hasattr(new_user.user_type, 'value') else str(new_user.user_type)
+        }
+        
+        # Add rider_id if user is a rider
+        if request.user_type == UserType.rider:
+            rider = db.query(Rider).filter(Rider.user_id == new_user.user_id).first()
+            if rider:
+                response_data["rider_id"] = rider.rider_id
+        
         return {
             "success": True,
             "message": "Registration successful! You can now login.",
-            "data": {
-                "user_id": new_user.user_id,
-                "email": new_user.email,
-                "full_name": new_user.full_name,
-                "user_type": new_user.user_type.value if hasattr(new_user.user_type, 'value') else str(new_user.user_type)
-            }
+            "data": response_data
         }
     
     except HTTPException:
@@ -447,7 +485,6 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed. Please try again."
         )
-    
 
 # ============================================================================
 # FORGOT PASSWORD OTP ROUTES
