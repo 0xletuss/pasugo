@@ -3,7 +3,7 @@ routes/locations.py - User Location and Available Riders Routes (FastAPI)
 Handles location tracking and displaying available riders on customer map
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel, Field
@@ -12,10 +12,39 @@ from decimal import Decimal
 
 from database import get_db
 from sqlalchemy.orm import Session
-from utils.security import get_current_user
 
 # Create router
 router = APIRouter(prefix="/locations", tags=["locations"])
+
+
+# ============================================
+# AUTHENTICATION DEPENDENCY
+# ============================================
+
+async def get_current_user_from_token(authorization: str = Header(None)):
+    """Extract and validate JWT token from Authorization header"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header missing")
+    
+    try:
+        # Extract token from "Bearer <token>"
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(status_code=401, detail="Invalid authentication scheme")
+        
+        # Decode and validate token
+        from utils.security import decode_access_token
+        payload = decode_access_token(token)
+        
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        return payload
+        
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid authorization header format")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
 
 
 # ============================================
@@ -28,34 +57,6 @@ class LocationUpdate(BaseModel):
     accuracy: Optional[int] = Field(None, ge=0)
     address: Optional[str] = None
     request_id: Optional[int] = None
-
-
-class LocationResponse(BaseModel):
-    location_id: int
-    user_id: int
-    latitude: float
-    longitude: float
-    accuracy: Optional[int]
-    address: Optional[str]
-    created_at: datetime
-
-
-class RiderLocationResponse(BaseModel):
-    rider_id: int
-    user_id: int
-    full_name: str
-    phone_number: str
-    vehicle_type: str
-    license_plate: str
-    availability_status: str
-    rating: float
-    total_tasks_completed: int
-    latitude: Optional[float]
-    longitude: Optional[float]
-    accuracy: Optional[int]
-    address: Optional[str]
-    distance_km: Optional[float]
-    last_location_update: Optional[datetime]
 
 
 # ============================================
@@ -90,7 +91,7 @@ def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 async def update_location(
     location: LocationUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_from_token)
 ):
     """
     Update user's current location
@@ -173,7 +174,7 @@ async def get_available_riders(
     radius: float = Query(20, ge=1, le=100, description="Search radius in km"),
     limit: int = Query(50, ge=1, le=200, description="Maximum riders to return"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_from_token)
 ):
     """
     Get all available riders with their locations
@@ -262,7 +263,7 @@ async def get_nearby_riders(
     radius: float = Query(5, ge=1, le=100, description="Search radius in km"),
     status: str = Query("available", description="Availability status"),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_from_token)
 ):
     """Get riders within a specific radius and availability status"""
     try:
@@ -348,7 +349,7 @@ async def get_nearby_riders(
 async def get_rider_location(
     rider_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_from_token)
 ):
     """Get a specific rider's location with details"""
     try:
@@ -410,7 +411,7 @@ async def get_rider_location(
 async def get_user_location(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_from_token)
 ):
     """Get a user's latest location"""
     try:
