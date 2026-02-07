@@ -25,6 +25,9 @@ from routes import (
     uploads_router
 )
 
+# Import the new locations router
+from routes.locations import router as locations_router
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,
@@ -113,6 +116,9 @@ app.include_router(notifications_router, prefix="/api")
 app.include_router(payments_router, prefix="/api")
 app.include_router(uploads_router, prefix="/api")
 
+# ✅ ADD THE LOCATIONS ROUTER
+app.include_router(locations_router, prefix="/api")
+
 
 # Startup event
 @app.on_event("startup")
@@ -149,6 +155,7 @@ def startup_event():
         logger.error(f"❌ Database initialization failed: {str(e)}", exc_info=True)
     
     logger.info("✅ API ready to receive requests")
+    logger.info("📍 Locations API endpoints registered")
     logger.info("=" * 70)
     
     # Console output for easy visibility
@@ -157,6 +164,7 @@ def startup_event():
     print(f"📚 Documentation available at: /docs")
     print(f"🔗 Database: {settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
     print("✅ API ready to receive requests")
+    print("📍 Locations API endpoints registered")
     print("=" * 70 + "\n")
 
 
