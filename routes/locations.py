@@ -12,6 +12,7 @@ from decimal import Decimal
 
 from database import get_db
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from routes.auth import get_current_user
 from models.user import User
 
@@ -74,25 +75,25 @@ async def update_location(
         
         # Check if location exists for this user (within last hour)
         existing = db.execute(
-            """
+            text("""
             SELECT location_id FROM user_locations
             WHERE user_id = :user_id 
             AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)
             ORDER BY created_at DESC
             LIMIT 1
-            """,
+            """),
             {"user_id": user_id}
         ).fetchone()
 
         if existing:
             # Update existing location
             db.execute(
-                """
+                text("""
                 UPDATE user_locations 
                 SET latitude = :lat, longitude = :lng, accuracy = :acc, 
                     address = :addr, created_at = NOW()
                 WHERE location_id = :location_id
-                """,
+                """),
                 {
                     "lat": location.latitude,
                     "lng": location.longitude,
@@ -105,11 +106,11 @@ async def update_location(
         else:
             # Insert new location
             result = db.execute(
-                """
+                text("""
                 INSERT INTO user_locations 
                 (user_id, request_id, latitude, longitude, accuracy, address)
                 VALUES (:user_id, :request_id, :lat, :lng, :acc, :addr)
-                """,
+                """),
                 {
                     "user_id": user_id,
                     "request_id": location.request_id,
@@ -155,7 +156,7 @@ async def get_available_riders(
     try:
         # Get available riders with their locations
         rows = db.execute(
-            """
+            text("""
             SELECT 
                 r.rider_id,
                 u.user_id,
@@ -178,7 +179,7 @@ async def get_available_riders(
             AND ul.created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
             ORDER BY r.rating DESC
             LIMIT :limit
-            """,
+            """),
             {"limit": limit}
         ).fetchall()
 
@@ -274,7 +275,7 @@ async def get_nearby_riders(
             ORDER BY r.rating DESC, r.rider_id
         """
 
-        rows = db.execute(query).fetchall()
+        rows = db.execute(text(query)).fetchall()
 
         riders_list = []
         for row in rows:
@@ -326,7 +327,7 @@ async def get_rider_location(
     """Get a specific rider's location with details"""
     try:
         row = db.execute(
-            """
+            text("""
             SELECT 
                 r.rider_id,
                 u.user_id,
@@ -346,7 +347,7 @@ async def get_rider_location(
             JOIN users u ON r.user_id = u.user_id
             LEFT JOIN user_locations ul ON u.user_id = ul.user_id
             WHERE r.rider_id = :rider_id
-            """,
+            """),
             {"rider_id": rider_id}
         ).fetchone()
 
@@ -392,14 +393,14 @@ async def get_user_location(
             raise HTTPException(status_code=403, detail="Unauthorized")
 
         row = db.execute(
-            """
+            text("""
             SELECT location_id, user_id, request_id, latitude, longitude, 
                    accuracy, address, created_at
             FROM user_locations
             WHERE user_id = :user_id
             ORDER BY created_at DESC
             LIMIT 1
-            """,
+            """),
             {"user_id": user_id}
         ).fetchone()
 
