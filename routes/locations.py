@@ -163,7 +163,6 @@ async def get_available_riders(
                 u.full_name,
                 u.phone_number,
                 r.vehicle_type,
-                r.license_plate,
                 r.availability_status,
                 r.rating,
                 r.total_tasks_completed,
@@ -185,8 +184,8 @@ async def get_available_riders(
 
         riders_list = []
         for row in rows:
-            rider_lat = row[9]
-            rider_lng = row[10]
+            rider_lat = row[8]
+            rider_lng = row[9]
             
             if rider_lat and rider_lng:
                 distance = calculate_distance(lat, lng, float(rider_lat), float(rider_lng))
@@ -199,16 +198,15 @@ async def get_available_riders(
                         "full_name": row[2],
                         "phone_number": row[3],
                         "vehicle_type": row[4],
-                        "license_plate": row[5],
-                        "availability_status": row[6],
-                        "rating": float(row[7]) if row[7] else 0.0,
-                        "total_tasks_completed": row[8],
+                        "availability_status": row[5],
+                        "rating": float(row[6]) if row[6] else 0.0,
+                        "total_tasks_completed": row[7],
                         "latitude": float(rider_lat),
                         "longitude": float(rider_lng),
-                        "accuracy": row[11],
-                        "address": row[12],
+                        "accuracy": row[10],
+                        "address": row[11],
                         "distance_km": round(distance, 2),
-                        "last_location_update": row[13].isoformat() if row[13] else None
+                        "last_location_update": row[12].isoformat() if row[12] else None
                     })
 
         # Sort by distance
@@ -258,7 +256,6 @@ async def get_nearby_riders(
                 u.full_name,
                 u.phone_number,
                 r.vehicle_type,
-                r.license_plate,
                 r.availability_status,
                 r.rating,
                 r.total_tasks_completed,
@@ -279,8 +276,8 @@ async def get_nearby_riders(
 
         riders_list = []
         for row in rows:
-            rider_lat = row[9]
-            rider_lng = row[10]
+            rider_lat = row[8]
+            rider_lng = row[9]
             
             if rider_lat and rider_lng:
                 distance = calculate_distance(lat, lng, float(rider_lat), float(rider_lng))
@@ -292,16 +289,15 @@ async def get_nearby_riders(
                         "full_name": row[2],
                         "phone_number": row[3],
                         "vehicle_type": row[4],
-                        "license_plate": row[5],
-                        "availability_status": row[6],
-                        "rating": float(row[7]) if row[7] else 0.0,
-                        "total_tasks_completed": row[8],
+                        "availability_status": row[5],
+                        "rating": float(row[6]) if row[6] else 0.0,
+                        "total_tasks_completed": row[7],
                         "latitude": float(rider_lat),
                         "longitude": float(rider_lng),
-                        "accuracy": row[11],
-                        "address": row[12],
+                        "accuracy": row[10],
+                        "address": row[11],
                         "distance_km": round(distance, 2),
-                        "last_location_update": row[13].isoformat() if row[13] else None
+                        "last_location_update": row[12].isoformat() if row[12] else None
                     })
 
         riders_list.sort(key=lambda r: r["distance_km"])
@@ -334,7 +330,6 @@ async def get_rider_location(
                 u.full_name,
                 u.phone_number,
                 r.vehicle_type,
-                r.license_plate,
                 r.availability_status,
                 r.rating,
                 r.total_tasks_completed,
@@ -362,15 +357,14 @@ async def get_rider_location(
                 "full_name": row[2],
                 "phone_number": row[3],
                 "vehicle_type": row[4],
-                "license_plate": row[5],
-                "availability_status": row[6],
-                "rating": float(row[7]) if row[7] else 0.0,
-                "total_tasks_completed": row[8],
-                "latitude": float(row[9]) if row[9] else None,
-                "longitude": float(row[10]) if row[10] else None,
-                "accuracy": row[11],
-                "address": row[12],
-                "last_location_update": row[13].isoformat() if row[13] else None
+                "availability_status": row[5],
+                "rating": float(row[6]) if row[6] else 0.0,
+                "total_tasks_completed": row[7],
+                "latitude": float(row[8]) if row[8] else None,
+                "longitude": float(row[9]) if row[9] else None,
+                "accuracy": row[10],
+                "address": row[11],
+                "last_location_update": row[12].isoformat() if row[12] else None
             }
         }
 
