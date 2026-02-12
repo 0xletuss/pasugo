@@ -31,6 +31,7 @@ class Rider(Base):
     # Relationships
     user = relationship("User", back_populates="rider_profile")
     bill_requests = relationship("BillRequest", back_populates="rider")
+    requests = relationship("Request", back_populates="rider")
     ratings = relationship("Rating", back_populates="rider")
     payments = relationship("Payment", back_populates="rider")
     tasks = relationship("RiderTask", back_populates="rider")

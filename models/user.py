@@ -28,6 +28,7 @@ class User(Base):
 
     # Relationships
     bill_requests = relationship("BillRequest", back_populates="customer", foreign_keys="BillRequest.customer_id")
+    requests = relationship("Request", back_populates="customer", foreign_keys="Request.customer_id")
     complaints = relationship("Complaint", back_populates="customer")
     sessions = relationship("UserSession", back_populates="user")
     notifications = relationship("Notification", back_populates="user")
