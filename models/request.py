@@ -43,6 +43,10 @@ class Request(Base):
     delivery_address = Column(String(500), nullable=True)
     delivery_option = Column(String(50), nullable=True)  # 'current-location' or 'custom-address'
     
+    # NEW: Rider selection tracking
+    selected_rider_id = Column(Integer, ForeignKey("riders.rider_id", ondelete="SET NULL"), nullable=True, index=True)
+    notification_sent_at = Column(DateTime, nullable=True, index=True)
+    
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), index=True)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -50,7 +54,7 @@ class Request(Base):
 
     # Relationships
     customer = relationship("User", back_populates="requests", foreign_keys=[customer_id])
-    rider = relationship("Rider", back_populates="requests")
+    rider = relationship("Rider", back_populates="requests", foreign_keys=[rider_id])
     bill_photos = relationship("RequestBillPhoto", back_populates="request", cascade="all, delete-orphan")
     attachments = relationship("RequestAttachment", back_populates="request", cascade="all, delete-orphan")
 

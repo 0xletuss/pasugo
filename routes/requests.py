@@ -2,13 +2,16 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 from database import get_db
 from models.user import User
 from models.request import Request, RequestStatus, ServiceType, RequestBillPhoto, RequestAttachment
 from models.rider import Rider
 from utils.dependencies import get_current_active_user
 from decimal import Decimal
+from sqlalchemy import and_, or_
+from models.location import Location
+from math import radians, cos, sin, asin, sqrt
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
@@ -77,6 +80,19 @@ class RequestDetailResponse(RequestResponse):
     rider_phone: Optional[str]
 
 
+class AddBillPhotoRequest(BaseModel):
+    photo_url: str
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+
+
+class AddAttachmentRequest(BaseModel):
+    file_name: str
+    file_url: str
+    file_type: Optional[str] = None
+    file_size: Optional[int] = None
+
+
 # ===== ENDPOINTS =====
 
 @router.post("/create", status_code=status.HTTP_201_CREATED)
@@ -87,25 +103,14 @@ def create_request(
 ):
     """
     Create a new request (groceries, bills, delivery, pharmacy, pickup, documents)
-    
-    Frontend sends:
-    {
-        "service_type": "groceries",
-        "items_description": "2kg rice, 1L milk, 5 eggs",
-        "budget_limit": 1500.00,
-        "special_instructions": "No plastic bags please",
-        "pickup_location": null (for delivery service only),
-        "delivery_address": null (for delivery service only),
-        "delivery_option": null
-    }
     """
-    
+
     if current_user.user_type != "customer":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only customers can create requests"
         )
-    
+
     # Validate delivery service specific fields
     if request_data.service_type == ServiceType.delivery:
         if not request_data.pickup_location:
@@ -118,7 +123,7 @@ def create_request(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Delivery address is required when delivery_option is custom-address"
             )
-    
+
     # Create request
     new_request = Request(
         customer_id=current_user.user_id,
@@ -131,11 +136,11 @@ def create_request(
         delivery_option=request_data.delivery_option,
         status=RequestStatus.pending
     )
-    
+
     db.add(new_request)
     db.commit()
     db.refresh(new_request)
-    
+
     return {
         "success": True,
         "message": "Request created successfully",
@@ -159,39 +164,31 @@ def get_my_requests(
 ):
     """
     Get current user's requests
-    
-    Query params:
-    - service_type: Filter by service type (optional)
-    - status: Filter by status (optional)
-    - page: Page number (default 1)
-    - page_size: Results per page (default 20, max 100)
     """
-    
+
     if current_user.user_type == "customer":
         query = db.query(Request).filter(Request.customer_id == current_user.user_id)
     elif current_user.user_type == "rider":
-        # Riders can see assigned requests
         query = db.query(Request).filter(Request.rider_id == current_user.rider_profile.rider_id)
     else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view requests"
         )
-    
-    # Apply filters
+
     if service_type:
         query = query.filter(Request.service_type == service_type)
-    
+
     if status_filter:
         query = query.filter(Request.status == status_filter)
-    
+
     total = query.count()
-    
+
     requests = query.order_by(Request.created_at.desc()) \
         .offset((page - 1) * page_size) \
         .limit(page_size) \
         .all()
-    
+
     return {
         "success": True,
         "message": "Requests retrieved successfully",
@@ -199,7 +196,7 @@ def get_my_requests(
             {
                 "request_id": req.request_id,
                 "service_type": req.service_type,
-                "items_description": req.items_description[:100],  # Preview
+                "items_description": req.items_description[:100],
                 "status": req.status,
                 "budget_limit": float(req.budget_limit) if req.budget_limit else None,
                 "created_at": req.created_at.isoformat(),
@@ -216,6 +213,72 @@ def get_my_requests(
     }
 
 
+# ===== STATIC ROUTES MUST COME BEFORE /{request_id} =====
+
+@router.get("/pending-for-me")
+def get_pending_requests_for_rider(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get requests where THIS rider has been selected by customers.
+    Only shows requests in 'pending' status that haven't timed out.
+    """
+
+    if current_user.user_type != "rider":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only riders can view pending requests"
+        )
+
+    rider = current_user.rider_profile
+    if not rider:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Rider profile not found"
+        )
+
+    timeout_threshold = datetime.utcnow() - timedelta(minutes=10)
+
+    requests = db.query(Request).filter(
+        and_(
+            Request.selected_rider_id == rider.rider_id,
+            Request.status == RequestStatus.pending,
+            Request.notification_sent_at > timeout_threshold
+        )
+    ).order_by(Request.notification_sent_at.desc()).all()
+
+    result = []
+    for req in requests:
+        customer = db.query(User).filter(User.user_id == req.customer_id).first()
+
+        time_elapsed = (datetime.utcnow() - req.notification_sent_at).total_seconds()
+        time_remaining = max(0, 600 - int(time_elapsed))
+
+        result.append({
+            "request_id": req.request_id,
+            "service_type": req.service_type,
+            "items_description": req.items_description,
+            "budget_limit": float(req.budget_limit) if req.budget_limit else None,
+            "special_instructions": req.special_instructions,
+            "pickup_location": req.pickup_location,
+            "delivery_address": req.delivery_address,
+            "customer_name": customer.full_name if customer else "Unknown",
+            "customer_phone": customer.phone_number if customer else None,
+            "created_at": req.created_at.isoformat(),
+            "notification_sent_at": req.notification_sent_at.isoformat() if req.notification_sent_at else None,
+            "time_remaining_seconds": time_remaining
+        })
+
+    return {
+        "success": True,
+        "message": f"Found {len(result)} pending requests",
+        "data": result
+    }
+
+
+# ===== PARAMETERIZED ROUTES BELOW =====
+
 @router.get("/{request_id}")
 def get_request_details(
     request_id: int,
@@ -224,38 +287,30 @@ def get_request_details(
 ):
     """
     Get request details with bill photos and attachments
-    
-    Authorization:
-    - Customers can view their own requests
-    - Riders can view assigned requests
-    - Admins can view all requests
     """
-    
+
     request = db.query(Request).filter(Request.request_id == request_id).first()
-    
+
     if not request:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Request not found"
         )
-    
-    # Check authorization
+
     if current_user.user_type == "customer" and request.customer_id != current_user.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this request"
         )
-    
+
     if current_user.user_type == "rider" and request.rider_id != current_user.rider_profile.rider_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this request"
         )
-    
-    # Get customer info
+
     customer = db.query(User).filter(User.user_id == request.customer_id).first()
-    
-    # Get rider info if assigned
+
     rider_name = None
     rider_phone = None
     if request.rider_id:
@@ -263,7 +318,7 @@ def get_request_details(
         if rider and rider.user:
             rider_name = rider.user.full_name
             rider_phone = rider.user.phone_number
-    
+
     return {
         "success": True,
         "message": "Request retrieved successfully",
@@ -314,44 +369,39 @@ def get_request_details(
 @router.post("/{request_id}/add-bill-photo")
 def add_bill_photo(
     request_id: int,
-    photo_url: str,
-    file_name: Optional[str] = None,
-    file_size: Optional[int] = None,
+    photo_data: AddBillPhotoRequest,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
-    Add bill photo to request
-    
-    Note: In production, handle file uploads via Cloudinary first,
-    then pass the photo_url here
+    Add bill photo to request (accepts JSON body)
     """
-    
+
     request = db.query(Request).filter(Request.request_id == request_id).first()
-    
+
     if not request:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Request not found"
         )
-    
+
     if request.customer_id != current_user.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to add photos to this request"
         )
-    
+
     bill_photo = RequestBillPhoto(
         request_id=request_id,
-        photo_url=photo_url,
-        file_name=file_name,
-        file_size=file_size
+        photo_url=photo_data.photo_url,
+        file_name=photo_data.file_name,
+        file_size=photo_data.file_size
     )
-    
+
     db.add(bill_photo)
     db.commit()
     db.refresh(bill_photo)
-    
+
     return {
         "success": True,
         "message": "Bill photo added successfully",
@@ -365,46 +415,40 @@ def add_bill_photo(
 @router.post("/{request_id}/add-attachment")
 def add_attachment(
     request_id: int,
-    file_name: str,
-    file_url: str,
-    file_type: Optional[str] = None,
-    file_size: Optional[int] = None,
+    attachment_data: AddAttachmentRequest,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
-    Add file attachment to request
-    
-    Note: In production, handle file uploads via Cloudinary first,
-    then pass the file_url here
+    Add file attachment to request (accepts JSON body)
     """
-    
+
     request = db.query(Request).filter(Request.request_id == request_id).first()
-    
+
     if not request:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Request not found"
         )
-    
+
     if request.customer_id != current_user.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to add attachments to this request"
         )
-    
+
     attachment = RequestAttachment(
         request_id=request_id,
-        file_name=file_name,
-        file_url=file_url,
-        file_type=file_type,
-        file_size=file_size
+        file_name=attachment_data.file_name,
+        file_url=attachment_data.file_url,
+        file_type=attachment_data.file_type,
+        file_size=attachment_data.file_size
     )
-    
+
     db.add(attachment)
     db.commit()
     db.refresh(attachment)
-    
+
     return {
         "success": True,
         "message": "Attachment added successfully",
@@ -426,34 +470,34 @@ def accept_request(
     Accept a request (RIDER ONLY)
     Changes status from 'pending' to 'assigned'
     """
-    
+
     if current_user.user_type != "rider":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only riders can accept requests"
         )
-    
+
     request = db.query(Request).filter(Request.request_id == request_id).first()
-    
+
     if not request:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Request not found"
         )
-    
+
     if request.status != RequestStatus.pending:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot accept request with status: {request.status}"
         )
-    
+
     request.rider_id = current_user.rider_profile.rider_id
     request.status = RequestStatus.assigned
     request.updated_at = datetime.utcnow()
-    
+
     db.commit()
     db.refresh(request)
-    
+
     return {
         "success": True,
         "message": "Request accepted successfully",
@@ -474,52 +518,46 @@ def update_request_status(
 ):
     """
     Update request status
-    
-    Status flow:
-    pending → assigned → in_progress → completed
-    
+    Status flow: pending → assigned → in_progress → completed
     Any status → cancelled (except completed)
     """
-    
+
     request = db.query(Request).filter(Request.request_id == request_id).first()
-    
+
     if not request:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Request not found"
         )
-    
-    # Authorization check
+
     if current_user.user_type == "customer" and request.customer_id != current_user.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this request"
         )
-    
+
     if current_user.user_type == "rider" and request.rider_id != current_user.rider_profile.rider_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this request"
         )
-    
-    # Status transition validation
+
     if request.status == RequestStatus.completed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot change status of completed request"
         )
-    
+
     old_status = request.status
     request.status = new_status
     request.updated_at = datetime.utcnow()
-    
-    # Set completed_at if marking as completed
+
     if new_status == RequestStatus.completed:
         request.completed_at = datetime.utcnow()
-    
+
     db.commit()
     db.refresh(request)
-    
+
     return {
         "success": True,
         "message": f"Request status updated from {old_status} to {new_status}",
@@ -542,33 +580,33 @@ def cancel_request(
     Only customers can cancel their own requests
     Cannot cancel if already completed
     """
-    
+
     request = db.query(Request).filter(Request.request_id == request_id).first()
-    
+
     if not request:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Request not found"
         )
-    
+
     if request.customer_id != current_user.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to cancel this request"
         )
-    
+
     if request.status == RequestStatus.completed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot cancel completed request"
         )
-    
+
     request.status = RequestStatus.cancelled
     request.updated_at = datetime.utcnow()
-    
+
     db.commit()
     db.refresh(request)
-    
+
     return {
         "success": True,
         "message": "Request cancelled successfully",
@@ -587,32 +625,32 @@ def delete_bill_photo(
     db: Session = Depends(get_db)
 ):
     """Delete a bill photo from request"""
-    
+
     request = db.query(Request).filter(Request.request_id == request_id).first()
-    
+
     if not request:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Request not found"
         )
-    
+
     if request.customer_id != current_user.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized"
         )
-    
+
     photo = db.query(RequestBillPhoto).filter(RequestBillPhoto.photo_id == photo_id).first()
-    
+
     if not photo:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Photo not found"
         )
-    
+
     db.delete(photo)
     db.commit()
-    
+
     return {
         "success": True,
         "message": "Photo deleted successfully"
@@ -627,33 +665,202 @@ def delete_attachment(
     db: Session = Depends(get_db)
 ):
     """Delete an attachment from request"""
-    
+
     request = db.query(Request).filter(Request.request_id == request_id).first()
-    
+
     if not request:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Request not found"
         )
-    
+
     if request.customer_id != current_user.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized"
         )
-    
+
     attachment = db.query(RequestAttachment).filter(RequestAttachment.attachment_id == attachment_id).first()
-    
+
     if not attachment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Attachment not found"
         )
-    
+
     db.delete(attachment)
     db.commit()
-    
+
     return {
         "success": True,
         "message": "Attachment deleted successfully"
+    }
+
+
+@router.post("/{request_id}/select-rider")
+def select_rider_for_request(
+    request_id: int,
+    rider_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Customer selects a specific rider for their request.
+    This sends a notification to ONLY that rider.
+    """
+
+    if current_user.user_type != "customer":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only customers can select riders"
+        )
+
+    request = db.query(Request).filter(Request.request_id == request_id).first()
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+
+    if request.customer_id != current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to modify this request"
+        )
+
+    if request.status != RequestStatus.pending:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Request already has status: {request.status}"
+        )
+
+    rider = db.query(Rider).filter(Rider.rider_id == rider_id).first()
+    if not rider:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Rider not found"
+        )
+
+    request.selected_rider_id = rider_id
+    request.notification_sent_at = datetime.utcnow()
+    request.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(request)
+
+    return {
+        "success": True,
+        "message": f"Rider {rider.user.full_name} has been notified",
+        "data": {
+            "request_id": request.request_id,
+            "selected_rider_id": rider_id,
+            "rider_name": rider.user.full_name,
+            "notification_sent_at": request.notification_sent_at.isoformat()
+        }
+    }
+
+
+@router.post("/{request_id}/decline")
+def decline_request(
+    request_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Rider declines a request they were selected for.
+    Returns request to pending state so customer can select another rider.
+    """
+
+    if current_user.user_type != "rider":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only riders can decline requests"
+        )
+
+    request = db.query(Request).filter(Request.request_id == request_id).first()
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+
+    if request.selected_rider_id != current_user.rider_profile.rider_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You were not selected for this request"
+        )
+
+    request.selected_rider_id = None
+    request.notification_sent_at = None
+    request.updated_at = datetime.utcnow()
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Request declined. Customer will be notified.",
+        "data": {
+            "request_id": request.request_id,
+            "status": request.status
+        }
+    }
+
+
+@router.get("/{request_id}/status-poll")
+def poll_request_status(
+    request_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Lightweight endpoint for customers to poll request status.
+    Returns just the essential info to check if rider accepted.
+    """
+
+    request = db.query(Request).filter(Request.request_id == request_id).first()
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+
+    if current_user.user_type == "customer" and request.customer_id != current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized"
+        )
+
+    timed_out = False
+    if request.notification_sent_at:
+        time_elapsed = (datetime.utcnow() - request.notification_sent_at).total_seconds()
+        if time_elapsed > 600 and request.status == RequestStatus.pending:
+            timed_out = True
+            request.selected_rider_id = None
+            request.notification_sent_at = None
+            db.commit()
+
+    rider_info = None
+    if request.rider_id:
+        rider = db.query(Rider).filter(Rider.rider_id == request.rider_id).first()
+        if rider and rider.user:
+            rider_info = {
+                "rider_id": rider.rider_id,
+                "name": rider.user.full_name,
+                "phone": rider.user.phone_number,
+                "vehicle_type": rider.vehicle_type,
+                "license_plate": rider.vehicle_plate,
+                "rating": float(rider.rating) if rider.rating else 0
+            }
+
+    return {
+        "success": True,
+        "data": {
+            "request_id": request.request_id,
+            "status": request.status,
+            "rider_id": request.rider_id,
+            "selected_rider_id": request.selected_rider_id,
+            "timed_out": timed_out,
+            "rider_info": rider_info,
+            "updated_at": request.updated_at.isoformat()
+        }
     }
