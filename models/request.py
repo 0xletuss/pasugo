@@ -28,25 +28,25 @@ class Request(Base):
     request_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     customer_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
     rider_id = Column(Integer, ForeignKey("riders.rider_id", ondelete="SET NULL"), nullable=True, index=True)
-    
+
     # Service details
     service_type = Column(Enum(ServiceType), nullable=False, index=True)
     items_description = Column(Text, nullable=False)
     budget_limit = Column(DECIMAL(10, 2), nullable=True)
     special_instructions = Column(Text, nullable=True)
-    
+
     # Request status
     status = Column(Enum(RequestStatus), default=RequestStatus.pending, index=True)
-    
+
     # Location details (for delivery service)
     pickup_location = Column(String(500), nullable=True)
     delivery_address = Column(String(500), nullable=True)
     delivery_option = Column(String(50), nullable=True)  # 'current-location' or 'custom-address'
-    
-    # NEW: Rider selection tracking
+
+    # Rider selection tracking
     selected_rider_id = Column(Integer, ForeignKey("riders.rider_id", ondelete="SET NULL"), nullable=True, index=True)
     notification_sent_at = Column(DateTime, nullable=True, index=True)
-    
+
     # Timestamps
     created_at = Column(DateTime, server_default=func.now(), index=True)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -54,7 +54,21 @@ class Request(Base):
 
     # Relationships
     customer = relationship("User", back_populates="requests", foreign_keys=[customer_id])
-    rider = relationship("Rider", back_populates="requests", foreign_keys=[rider_id])
+
+    # Assigned rider (rider_id FK)
+    rider = relationship(
+        "Rider",
+        foreign_keys=[rider_id],
+        back_populates="requests"
+    )
+
+    # Selected/notified rider (selected_rider_id FK)
+    selected_rider = relationship(
+        "Rider",
+        foreign_keys=[selected_rider_id],
+        back_populates="selected_requests"
+    )
+
     bill_photos = relationship("RequestBillPhoto", back_populates="request", cascade="all, delete-orphan")
     attachments = relationship("RequestAttachment", back_populates="request", cascade="all, delete-orphan")
 
@@ -64,11 +78,11 @@ class RequestBillPhoto(Base):
 
     photo_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     request_id = Column(Integer, ForeignKey("requests.request_id", ondelete="CASCADE"), nullable=False, index=True)
-    
+
     photo_url = Column(String(500), nullable=False)
     file_name = Column(String(255), nullable=True)
     file_size = Column(Integer, nullable=True)
-    
+
     created_at = Column(DateTime, server_default=func.now())
 
     # Relationships
@@ -80,12 +94,12 @@ class RequestAttachment(Base):
 
     attachment_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     request_id = Column(Integer, ForeignKey("requests.request_id", ondelete="CASCADE"), nullable=False, index=True)
-    
+
     file_name = Column(String(255), nullable=False)
     file_url = Column(String(500), nullable=False)
     file_type = Column(String(100), nullable=True)
     file_size = Column(Integer, nullable=True)
-    
+
     created_at = Column(DateTime, server_default=func.now())
 
     # Relationships
