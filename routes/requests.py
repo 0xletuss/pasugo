@@ -9,9 +9,7 @@ from models.request import Request, RequestStatus, ServiceType, RequestBillPhoto
 from models.rider import Rider
 from utils.dependencies import get_current_active_user
 from decimal import Decimal
-from sqlalchemy import and_, or_
-from models.location import Location
-from math import radians, cos, sin, asin, sqrt
+from sqlalchemy import and_
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
