@@ -15,10 +15,11 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from utils.dependencies import get_current_user
-from utils.security import decode_token
-from services.messaging_service import MessageService
+from utils.security import verify_token_silent
+from services.message_service import MessageService
+from models.user import User
 
-router = APIRouter(prefix="/api/messages", tags=["messaging"])
+router = APIRouter(prefix="/messages", tags=["messaging"])
 
 
 # ── Pydantic Schemas ───────────────────────────────────────────
@@ -86,13 +87,14 @@ async def websocket_endpoint(
     db: Session = Depends(get_db),
 ):
     # Validate token
-    user = decode_token(token)
+    user = verify_token_silent(token)
     if not user:
         await websocket.close(code=4001)
         return
 
-    user_id   = user["user_id"]
-    user_type = user["user_type"]
+    # verify_token_silent returns payload dict with "sub" as user_id
+    user_id   = int(user.get("sub"))
+    user_type = user.get("user_type")
     full_name = user.get("full_name", "")
     socket_id = str(uuid.uuid4())
 
@@ -218,7 +220,7 @@ def get_conversations(
 ):
     service = MessageService(db)
     conversations = service.get_user_conversations(
-        current_user["user_id"], current_user["user_type"]
+        current_user.user_id, current_user.user_type
     )
     return {"success": True, "data": conversations}
 
@@ -253,11 +255,11 @@ def create_support_conversation(
     current_user = Depends(get_current_user),
     db: Session  = Depends(get_db),
 ):
-    if current_user["user_type"] != "customer":
+    if current_user.user_type != "customer":
         raise HTTPException(status_code=403, detail="Only customers can start support chats")
 
     service = MessageService(db)
-    convo = service.create_support_conversation(current_user["user_id"])
+    convo = service.create_support_conversation(current_user.user_id)
     return {"success": True, "data": {
         "conversation_id":   convo.conversation_id,
         "conversation_type": convo.conversation_type,
@@ -272,7 +274,7 @@ def get_conversation(
 ):
     service = MessageService(db)
 
-    if not service.user_has_access(current_user["user_id"], current_user["user_type"], conversation_id):
+    if not service.user_has_access(current_user.user_id, current_user.user_type, conversation_id):
         raise HTTPException(status_code=403, detail="Access denied")
 
     convo = service.get_conversation_by_id(conversation_id)
@@ -282,9 +284,9 @@ def get_conversation(
     messages = service.get_messages(conversation_id, limit=50)
 
     # Auto mark as read
-    unread_ids = [m["message_id"] for m in messages if m["sender_id"] != current_user["user_id"]]
+    unread_ids = [m["message_id"] for m in messages if m["sender_id"] != current_user.user_id]
     if unread_ids:
-        service.mark_messages_read(unread_ids, current_user["user_id"])
+        service.mark_messages_read(unread_ids, current_user.user_id)
 
     return {"success": True, "data": {"conversation": {
         "conversation_id":   convo.conversation_id,
@@ -304,7 +306,7 @@ def get_messages(
 ):
     service = MessageService(db)
 
-    if not service.user_has_access(current_user["user_id"], current_user["user_type"], conversation_id):
+    if not service.user_has_access(current_user.user_id, current_user.user_type, conversation_id):
         raise HTTPException(status_code=403, detail="Access denied")
 
     messages = service.get_messages(conversation_id, limit=limit, before_message_id=before_message_id)
@@ -319,10 +321,10 @@ def get_unread_count(
 ):
     service = MessageService(db)
 
-    if not service.user_has_access(current_user["user_id"], current_user["user_type"], conversation_id):
+    if not service.user_has_access(current_user.user_id, current_user.user_type, conversation_id):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    count = service.get_unread_count(conversation_id, current_user["user_id"])
+    count = service.get_unread_count(conversation_id, current_user.user_id)
     return {"success": True, "data": {"unread_count": count}}
 
 
@@ -333,7 +335,7 @@ def delete_message(
     db: Session  = Depends(get_db),
 ):
     service = MessageService(db)
-    deleted = service.delete_message(message_id, current_user["user_id"])
+    deleted = service.delete_message(message_id, current_user.user_id)
     if not deleted:
         raise HTTPException(status_code=403, detail="Cannot delete this message")
     return {"success": True, "message": "Message deleted"}
@@ -345,7 +347,7 @@ def close_conversation(
     current_user = Depends(get_current_user),
     db: Session  = Depends(get_db),
 ):
-    if current_user["user_type"] != "admin":
+    if current_user.user_type != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
     service = MessageService(db)

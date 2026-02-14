@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func, and_, or_, not_, exists
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
-from models.messaging import (
+from models.messaging_models import (
     Conversation, Message, MessageReadReceipt,
     WebSocketConnection, TypingIndicator
 )
