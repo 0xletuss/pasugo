@@ -1,69 +1,106 @@
-# models/request.py
-# ─────────────────────────────────────────────────────────────
-# SQLAlchemy ORM Model for unified requests table
-# Handles ALL service types: groceries, bills, delivery, pickup, pharmacy, documents
-# ─────────────────────────────────────────────────────────────
-
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, DECIMAL, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Enum, DECIMAL, Date
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from database import Base
+import enum
+
+
+class ServiceType(str, enum.Enum):
+    groceries = "groceries"
+    bills = "bills"
+    delivery = "delivery"
+    pharmacy = "pharmacy"
+    pickup = "pickup"
+    documents = "documents"
+
+
+class RequestStatus(str, enum.Enum):
+    pending = "pending"
+    assigned = "assigned"
+    in_progress = "in_progress"
+    completed = "completed"
+    cancelled = "cancelled"
 
 
 class Request(Base):
-    """Unified request model - handles all service types"""
     __tablename__ = "requests"
 
-    request_id = Column(Integer, primary_key=True, autoincrement=True)
-    customer_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
-    rider_id = Column(Integer, ForeignKey("riders.rider_id", ondelete="SET NULL"), nullable=True)
-    
+    request_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    customer_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
+    rider_id = Column(Integer, ForeignKey("riders.rider_id", ondelete="SET NULL"), nullable=True, index=True)
+
     # Service details
-    service_type = Column(
-        String(50),  # groceries, bills, delivery, pickup, pharmacy, documents
-        nullable=False,
-        index=True
-    )
+    service_type = Column(Enum(ServiceType), nullable=False, index=True)
     items_description = Column(Text, nullable=False)
     budget_limit = Column(DECIMAL(10, 2), nullable=True)
     special_instructions = Column(Text, nullable=True)
-    
-    # Location details
+
+    # Request status
+    status = Column(Enum(RequestStatus), default=RequestStatus.pending, index=True)
+
+    # Location details (for delivery service)
     pickup_location = Column(String(500), nullable=True)
     delivery_address = Column(String(500), nullable=True)
-    delivery_option = Column(String(50), default="current-location")
-    
-    # Status
-    status = Column(
-        String(50),  # pending, assigned, in_progress, completed, cancelled
-        default="pending",
-        index=True
-    )
-    
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    completed_at = Column(DateTime, nullable=True)
-    
-    # Rider selection tracking
-    selected_rider_id = Column(Integer, ForeignKey("riders.rider_id", ondelete="SET NULL"), nullable=True)
-    notification_sent_at = Column(DateTime, nullable=True)
+    delivery_option = Column(String(50), nullable=True)  # 'current-location' or 'custom-address'
 
-    def dict(self):
-        """Convert to dictionary"""
-        return {
-            "request_id": self.request_id,
-            "customer_id": self.customer_id,
-            "rider_id": self.rider_id,
-            "service_type": self.service_type,
-            "items_description": self.items_description,
-            "budget_limit": float(self.budget_limit) if self.budget_limit else None,
-            "special_instructions": self.special_instructions,
-            "pickup_location": self.pickup_location,
-            "delivery_address": self.delivery_address,
-            "delivery_option": self.delivery_option,
-            "status": self.status,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
-        }
+    # Rider selection tracking
+    selected_rider_id = Column(Integer, ForeignKey("riders.rider_id", ondelete="SET NULL"), nullable=True, index=True)
+    notification_sent_at = Column(DateTime, nullable=True, index=True)
+
+    # Timestamps
+    created_at = Column(DateTime, server_default=func.now(), index=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    completed_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    customer = relationship("User", back_populates="requests", foreign_keys=[customer_id])
+
+    # Assigned rider (rider_id FK)
+    rider = relationship(
+        "Rider",
+        foreign_keys=[rider_id],
+        back_populates="requests"
+    )
+
+    # Selected/notified rider (selected_rider_id FK)
+    selected_rider = relationship(
+        "Rider",
+        foreign_keys=[selected_rider_id],
+        back_populates="selected_requests"
+    )
+
+    bill_photos = relationship("RequestBillPhoto", back_populates="request", cascade="all, delete-orphan")
+    attachments = relationship("RequestAttachment", back_populates="request", cascade="all, delete-orphan")
+
+
+class RequestBillPhoto(Base):
+    __tablename__ = "request_bill_photos"
+
+    photo_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    request_id = Column(Integer, ForeignKey("requests.request_id", ondelete="CASCADE"), nullable=False, index=True)
+
+    photo_url = Column(String(500), nullable=False)
+    file_name = Column(String(255), nullable=True)
+    file_size = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    # Relationships
+    request = relationship("Request", back_populates="bill_photos")
+
+
+class RequestAttachment(Base):
+    __tablename__ = "request_attachments"
+
+    attachment_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    request_id = Column(Integer, ForeignKey("requests.request_id", ondelete="CASCADE"), nullable=False, index=True)
+
+    file_name = Column(String(255), nullable=False)
+    file_url = Column(String(500), nullable=False)
+    file_type = Column(String(100), nullable=True)
+    file_size = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, server_default=func.now())
+
+    # Relationships
+    request = relationship("Request", back_populates="attachments")
