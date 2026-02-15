@@ -5,7 +5,7 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 from database import get_db
 from models.user import User
-from models.request import Request, RequestStatus, ServiceType, RequestBillPhoto, RequestAttachment
+from models.request import Request, RequestStatus, ServiceType, RequestBillPhoto, RequestAttachment, PaymentMethod, PaymentStatus
 from models.rider import Rider
 from utils.dependencies import get_current_active_user
 from decimal import Decimal
@@ -49,6 +49,7 @@ class CreateRequestRequest(BaseModel):
     delivery_option: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    payment_method: Optional[str] = None
 
 
 class RequestResponse(BaseModel):
@@ -63,6 +64,13 @@ class RequestResponse(BaseModel):
     pickup_location: Optional[str]
     delivery_address: Optional[str]
     delivery_option: Optional[str]
+    payment_method: Optional[str] = None
+    item_cost: Optional[float] = None
+    service_fee: Optional[float] = None
+    total_amount: Optional[float] = None
+    gcash_reference: Optional[str] = None
+    gcash_screenshot_url: Optional[str] = None
+    payment_status: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime]
@@ -134,6 +142,7 @@ def create_request(
         pickup_location=request_data.pickup_location,
         delivery_address=request_data.delivery_address,
         delivery_option=request_data.delivery_option,
+        payment_method=request_data.payment_method if request_data.payment_method in ('cod', 'gcash') else None,
         status=RequestStatus.pending
     )
 
@@ -375,6 +384,13 @@ def get_request_details(
             "pickup_location": request.pickup_location,
             "delivery_address": request.delivery_address,
             "delivery_option": request.delivery_option,
+            "payment_method": request.payment_method,
+            "item_cost": float(request.item_cost) if request.item_cost else None,
+            "service_fee": float(request.service_fee) if request.service_fee else None,
+            "total_amount": float(request.total_amount) if request.total_amount else None,
+            "gcash_reference": request.gcash_reference,
+            "gcash_screenshot_url": request.gcash_screenshot_url,
+            "payment_status": request.payment_status,
             "created_at": request.created_at.isoformat(),
             "updated_at": request.updated_at.isoformat(),
             "completed_at": request.completed_at.isoformat() if request.completed_at else None,
@@ -917,6 +933,194 @@ def start_delivery(
     }
 
 
+# ===== PAYMENT ENDPOINTS =====
+
+class SubmitBillRequest(BaseModel):
+    item_cost: float
+    service_fee: float
+
+
+class SubmitGcashPaymentRequest(BaseModel):
+    gcash_reference: str
+    gcash_screenshot_url: Optional[str] = None
+
+
+@router.post("/{request_id}/submit-bill")
+def submit_bill(
+    request_id: int,
+    bill_data: SubmitBillRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Rider submits the bill breakdown (item cost + service fee).
+    This tells the customer how much to pay.
+    """
+
+    if current_user.user_type != "rider":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only riders can submit bills"
+        )
+
+    request = db.query(Request).filter(Request.request_id == request_id).first()
+
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+
+    if request.rider_id != current_user.rider_profile.rider_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized - this request is not assigned to you"
+        )
+
+    if request.status not in [RequestStatus.assigned, RequestStatus.in_progress]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot submit bill for request with status: {request.status}"
+        )
+
+    item_cost = Decimal(str(bill_data.item_cost))
+    service_fee = Decimal(str(bill_data.service_fee))
+    total = item_cost + service_fee
+
+    request.item_cost = item_cost
+    request.service_fee = service_fee
+    request.total_amount = total
+    request.payment_status = PaymentStatus.pending
+    request.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(request)
+
+    return {
+        "success": True,
+        "message": "Bill submitted successfully. Customer has been notified.",
+        "data": {
+            "request_id": request.request_id,
+            "item_cost": float(request.item_cost),
+            "service_fee": float(request.service_fee),
+            "total_amount": float(request.total_amount),
+            "payment_method": request.payment_method,
+            "payment_status": request.payment_status
+        }
+    }
+
+
+@router.post("/{request_id}/submit-payment")
+def submit_payment(
+    request_id: int,
+    payment_data: SubmitGcashPaymentRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Customer submits GCash payment (reference number + optional screenshot).
+    Only for GCash payment method.
+    """
+
+    if current_user.user_type != "customer":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only customers can submit payments"
+        )
+
+    request = db.query(Request).filter(Request.request_id == request_id).first()
+
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+
+    if request.customer_id != current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to submit payment for this request"
+        )
+
+    if request.payment_method != PaymentMethod.gcash:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GCash payment submission is only for GCash payment method"
+        )
+
+    if not request.total_amount:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Rider has not submitted the bill yet"
+        )
+
+    request.gcash_reference = payment_data.gcash_reference
+    if payment_data.gcash_screenshot_url:
+        request.gcash_screenshot_url = payment_data.gcash_screenshot_url
+    request.payment_status = PaymentStatus.submitted
+    request.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(request)
+
+    return {
+        "success": True,
+        "message": "GCash payment submitted. Rider will verify.",
+        "data": {
+            "request_id": request.request_id,
+            "gcash_reference": request.gcash_reference,
+            "payment_status": request.payment_status
+        }
+    }
+
+
+@router.post("/{request_id}/confirm-payment")
+def confirm_payment(
+    request_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Rider confirms payment has been received (GCash verified or COD collected).
+    """
+
+    if current_user.user_type != "rider":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only riders can confirm payment"
+        )
+
+    request = db.query(Request).filter(Request.request_id == request_id).first()
+
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+
+    if request.rider_id != current_user.rider_profile.rider_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized - this request is not assigned to you"
+        )
+
+    request.payment_status = PaymentStatus.confirmed
+    request.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(request)
+
+    return {
+        "success": True,
+        "message": "Payment confirmed!",
+        "data": {
+            "request_id": request.request_id,
+            "payment_status": request.payment_status,
+            "total_amount": float(request.total_amount) if request.total_amount else None
+        }
+    }
+
+
 @router.post("/{request_id}/complete-delivery")
 def complete_delivery(
     request_id: int,
@@ -1027,6 +1231,12 @@ def poll_request_status(
             "selected_rider_id": request.selected_rider_id,
             "timed_out": timed_out,
             "rider_info": rider_info,
+            "payment_method": request.payment_method,
+            "item_cost": float(request.item_cost) if request.item_cost else None,
+            "service_fee": float(request.service_fee) if request.service_fee else None,
+            "total_amount": float(request.total_amount) if request.total_amount else None,
+            "gcash_reference": request.gcash_reference,
+            "payment_status": request.payment_status,
             "updated_at": request.updated_at.isoformat()
         }
     }

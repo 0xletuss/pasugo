@@ -22,6 +22,17 @@ class RequestStatus(str, enum.Enum):
     cancelled = "cancelled"
 
 
+class PaymentMethod(str, enum.Enum):
+    cod = "cod"
+    gcash = "gcash"
+
+
+class PaymentStatus(str, enum.Enum):
+    pending = "pending"
+    submitted = "submitted"
+    confirmed = "confirmed"
+
+
 class Request(Base):
     __tablename__ = "requests"
 
@@ -42,6 +53,15 @@ class Request(Base):
     pickup_location = Column(String(500), nullable=True)
     delivery_address = Column(String(500), nullable=True)
     delivery_option = Column(String(50), nullable=True)  # 'current-location' or 'custom-address'
+
+    # Payment fields
+    payment_method = Column(Enum(PaymentMethod), nullable=True)
+    item_cost = Column(DECIMAL(10, 2), nullable=True)
+    service_fee = Column(DECIMAL(10, 2), nullable=True)
+    total_amount = Column(DECIMAL(10, 2), nullable=True)
+    gcash_reference = Column(String(100), nullable=True)
+    gcash_screenshot_url = Column(String(500), nullable=True)
+    payment_status = Column(Enum(PaymentStatus), default=PaymentStatus.pending)
 
     # Rider selection tracking
     selected_rider_id = Column(Integer, ForeignKey("riders.rider_id", ondelete="SET NULL"), nullable=True, index=True)
