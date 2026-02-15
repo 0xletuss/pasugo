@@ -310,13 +310,14 @@ def register_request_otp(request: RegisterOTPRequest, db: Session = Depends(get_
         else:
             logger.info(f"Email service not configured. Registration OTP for {email}: {otp_code}")
         
-        logger.info(f"Registration OTP requested for: {email}")
+        logger.info(f"Registration OTP requested for: {email}, code: {otp_code}")
         
         return {
             "success": True,
             "message": "OTP sent to your email. Valid for 10 minutes.",
             "data": {
-                "email": email
+                "email": email,
+                "otp_code": otp_code  # Include for debugging - remove in production
             }
         }
     
@@ -360,18 +361,21 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
         # Get latest OTP for this email (email is stored in phone_number field)
         otp = db.query(OTP).filter(
             OTP.otp_type == OTPType.registration,
-            OTP.phone_number == email,  # ✅ Query by email stored in phone_number
+            OTP.phone_number == email,
             OTP.is_verified == False
         ).order_by(OTP.created_at.desc()).first()
         
         if not otp:
+            logger.warning(f"OTP not found for email={email} (type=registration, is_verified=False)")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="OTP not found. Please request a new one."
             )
         
         # Check if OTP is expired
-        if otp_manager.is_otp_expired(otp.expires_at):
+        now = datetime.utcnow()
+        logger.info(f"OTP check: now={now}, expires_at={otp.expires_at}, expired={now > otp.expires_at}")
+        if now > otp.expires_at:
             db.delete(otp)
             db.commit()
             raise HTTPException(
@@ -388,8 +392,12 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
                 detail="Too many failed attempts. Please request a new OTP."
             )
         
-        # Verify OTP code
-        if otp.otp_code != request.otp:
+        # Verify OTP code (strip both sides to avoid whitespace issues)
+        db_code = otp.otp_code.strip() if otp.otp_code else ""
+        user_code = request.otp.strip() if request.otp else ""
+        logger.info(f"OTP compare: db='{db_code}' vs request='{user_code}' for email={email}")
+        
+        if db_code != user_code:
             otp.attempts += 1
             db.commit()
             attempts_left = otp_manager.get_attempts_remaining(otp.attempts)
@@ -541,9 +549,13 @@ def forgot_password_request_otp(request: ForgotPasswordOTPRequest, db: Session =
         # Always return generic message for security
         logger.info(f"Password reset OTP requested for: {email}")
         
+        otp_debug = otp_code if user else None
         return {
             "success": True,
-            "message": "If the email exists, you will receive an OTP. Valid for 10 minutes."
+            "message": "If the email exists, you will receive an OTP. Valid for 10 minutes.",
+            "data": {
+                "otp_code": otp_debug  # Include for debugging - remove in production
+            }
         }
     
     except Exception as e:
@@ -608,8 +620,12 @@ def reset_password_with_otp(request: ResetPasswordOTPRequest, db: Session = Depe
                 detail="Too many failed attempts. Please request a new OTP."
             )
         
-        # Verify OTP code
-        if otp.otp_code != request.otp:
+        # Verify OTP code (strip both sides to avoid whitespace issues)
+        db_code = otp.otp_code.strip() if otp.otp_code else ""
+        user_code = request.otp.strip() if request.otp else ""
+        logger.info(f"Password reset OTP compare: db='{db_code}' vs request='{user_code}' for email={email}")
+        
+        if db_code != user_code:
             otp.attempts += 1
             db.commit()
             attempts_left = otp_manager.get_attempts_remaining(otp.attempts)
