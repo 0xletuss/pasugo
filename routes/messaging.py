@@ -1,7 +1,7 @@
-# routes/messaging_router.py
+# routes/messaging.py
 # ─────────────────────────────────────────────────────────────
-# FastAPI WebSocket + REST routes for Pasugo Messaging
-# Add to app.py: app.include_router(messaging_router)
+# FastAPI WebSocket + REST routes for Pasugo Messaging - FIXED
+# NOW QUERIES THE UNIFIED 'requests' TABLE (not bill_requests)
 # ─────────────────────────────────────────────────────────────
 
 import json
@@ -17,9 +17,14 @@ from database import get_db
 from utils.dependencies import get_current_user
 from utils.security import verify_token_silent
 from services.message_service import MessageService
-from models.user import User
 
-router = APIRouter(prefix="/messages", tags=["messaging"])
+# ✅ Import the request model
+try:
+    from models.request import Request
+except ImportError:
+    from models.bill_request import BillRequest as Request
+
+router = APIRouter(prefix="/api/messages", tags=["messaging"])
 
 
 # ── Pydantic Schemas ───────────────────────────────────────────
@@ -32,7 +37,6 @@ class CreateConversationRequest(BaseModel):
 
 class ConnectionManager:
     def __init__(self):
-        # { conversation_id: { user_id: WebSocket } }
         self.rooms: dict[int, dict[int, WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, conversation_id: int, user_id: int):
@@ -77,7 +81,6 @@ manager = ConnectionManager()
 
 
 # ── WebSocket Endpoint ─────────────────────────────────────────
-# ws://yourserver/api/messages/ws/{conversation_id}?token=<JWT>
 
 @router.websocket("/ws/{conversation_id}")
 async def websocket_endpoint(
@@ -86,13 +89,11 @@ async def websocket_endpoint(
     token: str = Query(...),
     db: Session = Depends(get_db),
 ):
-    # Validate token
     user = verify_token_silent(token)
     if not user:
         await websocket.close(code=4001)
         return
 
-    # verify_token_silent returns payload dict with "sub" as user_id
     user_id   = int(user.get("sub"))
     user_type = user.get("user_type")
     full_name = user.get("full_name", "")
@@ -100,16 +101,13 @@ async def websocket_endpoint(
 
     service = MessageService(db)
 
-    # Check access
     if not service.user_has_access(user_id, user_type, conversation_id):
         await websocket.close(code=4003)
         return
 
-    # Connect
     await manager.connect(websocket, conversation_id, user_id)
     service.register_connection(user_id, socket_id)
 
-    # Notify others: user joined
     await manager.broadcast_to_room(conversation_id, {
         "event": "user_joined",
         "user_id": user_id,
@@ -123,7 +121,6 @@ async def websocket_endpoint(
             data = json.loads(raw)
             event = data.get("event")
 
-            # ── send_message ─────────────────────────────────
             if event == "send_message":
                 content        = data.get("content")
                 message_type   = data.get("message_type", "text")
@@ -158,10 +155,8 @@ async def websocket_endpoint(
                     "attachment_url":  msg.attachment_url,
                     "sent_at":         msg.sent_at.isoformat(),
                 }
-                # Broadcast to all in room (including sender)
                 await manager.broadcast_to_room(conversation_id, payload)
 
-            # ── mark_read ────────────────────────────────────
             elif event == "mark_read":
                 message_ids = data.get("message_ids", [])
                 if message_ids:
@@ -174,7 +169,6 @@ async def websocket_endpoint(
                         "read_at":         datetime.utcnow().isoformat(),
                     }, exclude_user_id=user_id)
 
-            # ── typing_start ─────────────────────────────────
             elif event == "typing_start":
                 service.set_typing_status(conversation_id, user_id, True)
                 await manager.broadcast_to_room(conversation_id, {
@@ -185,7 +179,6 @@ async def websocket_endpoint(
                     "is_typing":       True,
                 }, exclude_user_id=user_id)
 
-            # ── typing_stop ──────────────────────────────────
             elif event == "typing_stop":
                 service.set_typing_status(conversation_id, user_id, False)
                 await manager.broadcast_to_room(conversation_id, {
@@ -194,7 +187,6 @@ async def websocket_endpoint(
                     "is_typing": False,
                 }, exclude_user_id=user_id)
 
-            # ── ping / keepalive ─────────────────────────────
             elif event == "ping":
                 await websocket.send_text(json.dumps({"event": "pong"}))
 
@@ -231,17 +223,28 @@ def create_conversation(
     current_user = Depends(get_current_user),
     db: Session  = Depends(get_db),
 ):
-    from models.bill_request import BillRequest
-    bill = db.query(BillRequest).filter(BillRequest.request_id == body.request_id).first()
-    if not bill:
-        raise HTTPException(status_code=404, detail="Bill request not found")
+    """
+    ✅ FIXED: Queries the unified 'requests' table
+    Handles ALL request types: groceries, bills, delivery, pickup, pharmacy, documents
+    """
+    
+    # ✅ Query the requests table (supports all service types)
+    request = db.query(Request).filter(Request.request_id == body.request_id).first()
+    
+    if not request:
+        raise HTTPException(status_code=404, detail="Request not found")
+
+    # Verify access
+    if current_user.user_id not in [request.customer_id, request.rider_id or 0]:
+        raise HTTPException(status_code=403, detail="Access denied to this request")
 
     service = MessageService(db)
     convo = service.get_or_create_conversation(
-        request_id=bill.request_id,
-        customer_id=bill.customer_id,
-        rider_id=bill.rider_id,
+        request_id=request.request_id,
+        customer_id=request.customer_id,
+        rider_id=request.rider_id,
     )
+    
     return {"success": True, "data": {
         "conversation_id":   convo.conversation_id,
         "request_id":        convo.request_id,
@@ -283,7 +286,6 @@ def get_conversation(
 
     messages = service.get_messages(conversation_id, limit=50)
 
-    # Auto mark as read
     unread_ids = [m["message_id"] for m in messages if m["sender_id"] != current_user.user_id]
     if unread_ids:
         service.mark_messages_read(unread_ids, current_user.user_id)
