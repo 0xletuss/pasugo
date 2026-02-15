@@ -812,7 +812,8 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
             data={
                 "sub": str(user.user_id), 
                 "email": user.email, 
-                "user_type": str(user.user_type)
+                "full_name": user.full_name,
+                "user_type": user.user_type.value if hasattr(user.user_type, 'value') else str(user.user_type)
             }
         )
         
@@ -837,7 +838,7 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
                     "user_id": user.user_id,
                     "email": user.email,
                     "full_name": user.full_name,
-                    "user_type": str(user.user_type) if hasattr(user.user_type, 'value') else user.user_type,
+                    "user_type": user.user_type.value if hasattr(user.user_type, 'value') else str(user.user_type),
                     "phone_number": user.phone_number,
                     "address": user.address
                 }
@@ -889,7 +890,8 @@ def refresh_access_token(request: RefreshTokenRequest, db: Session = Depends(get
             data={
                 "sub": str(user.user_id), 
                 "email": user.email, 
-                "user_type": str(user.user_type)
+                "full_name": user.full_name,
+                "user_type": user.user_type.value if hasattr(user.user_type, 'value') else str(user.user_type)
             }
         )
         
@@ -968,7 +970,7 @@ def validate_token_endpoint(
                     "user_id": user.user_id,
                     "email": user.email,
                     "full_name": user.full_name,
-                    "user_type": str(user.user_type) if hasattr(user.user_type, 'value') else user.user_type,
+                    "user_type": user.user_type.value if hasattr(user.user_type, 'value') else str(user.user_type),
                     "phone_number": user.phone_number,
                     "address": user.address
                 }

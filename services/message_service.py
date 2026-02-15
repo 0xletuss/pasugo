@@ -138,11 +138,21 @@ class MessageService:
         convo = self.get_conversation_by_id(conversation_id)
         if not convo:
             return False
-        if user_type == "admin":
+        
+        # Normalize user_type (handle both "UserType.customer" and "customer" formats)
+        normalized_type = user_type.lower()
+        if "customer" in normalized_type:
+            normalized_type = "customer"
+        elif "rider" in normalized_type:
+            normalized_type = "rider"
+        elif "admin" in normalized_type:
+            normalized_type = "admin"
+        
+        if normalized_type == "admin":
             return True
-        if user_type == "customer":
+        if normalized_type == "customer":
             return convo.customer_id == user_id
-        if user_type == "rider":
+        if normalized_type == "rider":
             from models.rider import Rider
             rider = self.db.query(Rider).filter(Rider.user_id == user_id).first()
             return rider is not None and convo.rider_id == rider.rider_id
