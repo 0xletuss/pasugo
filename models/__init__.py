@@ -13,11 +13,21 @@ from .user_login_history import UserLoginHistory
 from .user_preference import UserPreference
 from .rider_task import RiderTask
 from .password_reset_token import PasswordResetToken
+from .request import Request
+from .messaging_models import (
+    Conversation,
+    Message,
+    MessageReadReceipt,
+    WebSocketConnection,
+    TypingIndicator,
+)
+from .location import Location
 
 __all__ = [
     "User",
     "Rider",
     "BillRequest",
+    "Request",
     "Complaint",
     "ComplaintReply",
     "AdminUser",
@@ -32,4 +42,10 @@ __all__ = [
     "UserPreference",
     "RiderTask",
     "PasswordResetToken",
+    "Location",
+    "Conversation",
+    "Message",
+    "MessageReadReceipt",
+    "WebSocketConnection",
+    "TypingIndicator",
 ]
