@@ -25,7 +25,7 @@ class Request(Base):
         index=True
     )
     items_description = Column(Text, nullable=False)
-    budget_limit = Column(Decimal(10, 2), nullable=True)
+    budget_limit = Column(DECIMAL(10, 2), nullable=True)
     special_instructions = Column(Text, nullable=True)
     
     # Location details
