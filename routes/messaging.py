@@ -24,7 +24,7 @@ try:
 except ImportError:
     from models.bill_request import BillRequest as Request
 
-router = APIRouter(prefix="/api/messages", tags=["messaging"])
+router = APIRouter(prefix="/messages", tags=["messaging"])
 
 
 # ── Pydantic Schemas ───────────────────────────────────────────
