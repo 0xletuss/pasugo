@@ -47,6 +47,8 @@ class CreateRequestRequest(BaseModel):
     pickup_location: Optional[str] = None
     delivery_address: Optional[str] = None
     delivery_option: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class RequestResponse(BaseModel):
@@ -138,6 +140,29 @@ def create_request(
     db.add(new_request)
     db.commit()
     db.refresh(new_request)
+
+    # Save customer GPS to user_locations if provided
+    if request_data.latitude is not None and request_data.longitude is not None:
+        try:
+            # Check if recent location exists
+            existing = db.execute(
+                text("SELECT location_id FROM user_locations WHERE user_id = :uid AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR) ORDER BY created_at DESC LIMIT 1"),
+                {"uid": current_user.user_id}
+            ).fetchone()
+            if existing:
+                db.execute(
+                    text("UPDATE user_locations SET latitude = :lat, longitude = :lng, created_at = NOW() WHERE location_id = :lid"),
+                    {"lat": request_data.latitude, "lng": request_data.longitude, "lid": existing[0]}
+                )
+            else:
+                db.execute(
+                    text("INSERT INTO user_locations (user_id, request_id, latitude, longitude) VALUES (:uid, :rid, :lat, :lng)"),
+                    {"uid": current_user.user_id, "rid": new_request.request_id, "lat": request_data.latitude, "lng": request_data.longitude}
+                )
+            db.commit()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to save customer GPS on create: {e}")
 
     return {
         "success": True,
