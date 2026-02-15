@@ -5,7 +5,7 @@
 # ─────────────────────────────────────────────────────────────
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, Decimal, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, DECIMAL, ForeignKey
 from sqlalchemy.orm import relationship
 from database import Base
 
