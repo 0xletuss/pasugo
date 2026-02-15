@@ -804,6 +804,115 @@ def decline_request(
     }
 
 
+@router.post("/{request_id}/start-delivery")
+def start_delivery(
+    request_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Rider marks they're done shopping/collecting and starting delivery.
+    Changes status from 'assigned' to 'in_progress'.
+    """
+
+    if current_user.user_type != "rider":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only riders can start delivery"
+        )
+
+    request = db.query(Request).filter(Request.request_id == request_id).first()
+
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+
+    if request.rider_id != current_user.rider_profile.rider_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized - this request is not assigned to you"
+        )
+
+    if request.status != RequestStatus.assigned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot start delivery on request with status: {request.status}"
+        )
+
+    request.status = RequestStatus.in_progress
+    request.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(request)
+
+    return {
+        "success": True,
+        "message": "Delivery started! Customer has been notified.",
+        "data": {
+            "request_id": request.request_id,
+            "status": request.status,
+            "updated_at": request.updated_at.isoformat()
+        }
+    }
+
+
+@router.post("/{request_id}/complete-delivery")
+def complete_delivery(
+    request_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Rider marks delivery as completed.
+    Changes status from 'in_progress' to 'completed'.
+    """
+
+    if current_user.user_type != "rider":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only riders can complete delivery"
+        )
+
+    request = db.query(Request).filter(Request.request_id == request_id).first()
+
+    if not request:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Request not found"
+        )
+
+    if request.rider_id != current_user.rider_profile.rider_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized - this request is not assigned to you"
+        )
+
+    if request.status != RequestStatus.in_progress:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot complete delivery on request with status: {request.status}"
+        )
+
+    request.status = RequestStatus.completed
+    request.completed_at = datetime.utcnow()
+    request.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(request)
+
+    return {
+        "success": True,
+        "message": "Delivery completed successfully!",
+        "data": {
+            "request_id": request.request_id,
+            "status": request.status,
+            "completed_at": request.completed_at.isoformat()
+        }
+    }
+
+
 @router.get("/{request_id}/status-poll")
 def poll_request_status(
     request_id: int,
