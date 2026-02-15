@@ -9,7 +9,7 @@ from models.request import Request, RequestStatus, ServiceType, RequestBillPhoto
 from models.rider import Rider
 from utils.dependencies import get_current_active_user
 from decimal import Decimal
-from sqlalchemy import and_
+from sqlalchemy import and_, text
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
@@ -317,6 +317,19 @@ def get_request_details(
             rider_name = rider.user.full_name
             rider_phone = rider.user.phone_number
 
+    # Get customer's latest GPS location
+    customer_location = None
+    loc_row = db.execute(
+        text("SELECT latitude, longitude, address FROM user_locations WHERE user_id = :uid ORDER BY created_at DESC LIMIT 1"),
+        {"uid": request.customer_id}
+    ).fetchone()
+    if loc_row:
+        customer_location = {
+            "latitude": float(loc_row[0]),
+            "longitude": float(loc_row[1]),
+            "address": loc_row[2]
+        }
+
     return {
         "success": True,
         "message": "Request retrieved successfully",
@@ -325,6 +338,7 @@ def get_request_details(
             "customer_id": request.customer_id,
             "customer_name": customer.full_name if customer else None,
             "customer_phone": customer.phone_number if customer else None,
+            "customer_location": customer_location,
             "rider_id": request.rider_id,
             "rider_name": rider_name,
             "rider_phone": rider_phone,
@@ -847,13 +861,33 @@ def start_delivery(
     db.commit()
     db.refresh(request)
 
+    # Get customer's latest GPS location for the rider
+    customer_location = None
+    loc_row = db.execute(
+        text("SELECT latitude, longitude, address FROM user_locations WHERE user_id = :uid ORDER BY created_at DESC LIMIT 1"),
+        {"uid": request.customer_id}
+    ).fetchone()
+    if loc_row:
+        customer_location = {
+            "latitude": float(loc_row[0]),
+            "longitude": float(loc_row[1]),
+            "address": loc_row[2]
+        }
+
+    customer = db.query(User).filter(User.user_id == request.customer_id).first()
+
     return {
         "success": True,
         "message": "Delivery started! Customer has been notified.",
         "data": {
             "request_id": request.request_id,
             "status": request.status,
-            "updated_at": request.updated_at.isoformat()
+            "updated_at": request.updated_at.isoformat(),
+            "customer_name": customer.full_name if customer else None,
+            "customer_location": customer_location,
+            "delivery_address": request.delivery_address,
+            "pickup_location": request.pickup_location,
+            "delivery_option": request.delivery_option
         }
     }
 
