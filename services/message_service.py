@@ -1,13 +1,7 @@
-# services/message_service.py
-# ─────────────────────────────────────────────────────────────
-# Business logic + DB queries for messaging
-# ─────────────────────────────────────────────────────────────
-
 from datetime import datetime
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, and_, or_, not_, exists
-from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy import func, and_
 
 from models.messaging_models import (
     Conversation, Message, MessageReadReceipt,
@@ -66,12 +60,10 @@ class MessageService:
         if user_type == "customer":
             query = query.filter(Conversation.customer_id == user_id)
         elif user_type == "rider":
-            # Join riders table to match user_id -> rider_id
-            from models.rider import Rider  # your existing Rider model
+            from models.rider import Rider
             query = query.join(Rider, Rider.rider_id == Conversation.rider_id).filter(
                 Rider.user_id == user_id
             )
-        # admins see all conversations
 
         conversations = query.order_by(Conversation.last_message_at.desc()).all()
 
@@ -197,7 +189,7 @@ class MessageService:
             query = query.filter(Message.message_id < before_message_id)
 
         messages = query.order_by(Message.sent_at.desc()).limit(limit).all()
-        messages.reverse()  # chronological order
+        messages.reverse()
 
         return [self._serialize_message(m) for m in messages]
 

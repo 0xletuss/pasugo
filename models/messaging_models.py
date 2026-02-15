@@ -1,22 +1,17 @@
-# models/messaging_models.py
-# ─────────────────────────────────────────────────────────────
-# SQLAlchemy ORM Models for Pasugo Messaging Feature
-# ─────────────────────────────────────────────────────────────
-
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Enum, 
     Boolean, ForeignKey, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
-from database import Base  # your existing SQLAlchemy Base
+from database import Base
 
 
 class Conversation(Base):
     __tablename__ = "conversations"
 
     conversation_id   = Column(Integer, primary_key=True, autoincrement=True)
-    request_id        = Column(Integer, ForeignKey("bill_requests.request_id", ondelete="SET NULL"), nullable=True, unique=True)
+    request_id        = Column(Integer, ForeignKey("requests.request_id", ondelete="SET NULL"), nullable=True, unique=True)
     customer_id       = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
     rider_id          = Column(Integer, ForeignKey("riders.rider_id", ondelete="SET NULL"), nullable=True)
     admin_id          = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
@@ -26,7 +21,6 @@ class Conversation(Base):
     created_at        = Column(DateTime, default=datetime.utcnow)
     updated_at        = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationships
     messages          = relationship("Message", back_populates="conversation", cascade="all, delete")
 
 
@@ -46,7 +40,6 @@ class Message(Base):
     sent_at         = Column(DateTime, default=datetime.utcnow)
     created_at      = Column(DateTime, default=datetime.utcnow)
 
-    # Relationships
     conversation    = relationship("Conversation", back_populates="messages")
     read_receipts   = relationship("MessageReadReceipt", back_populates="message", cascade="all, delete")
 
@@ -61,7 +54,6 @@ class MessageReadReceipt(Base):
 
     __table_args__ = (UniqueConstraint("message_id", "user_id", name="uq_message_user"),)
 
-    # Relationships
     message     = relationship("Message", back_populates="read_receipts")
 
 
