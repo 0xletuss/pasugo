@@ -20,6 +20,101 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/uploads", tags=["File Uploads"])
 
 
+@router.post("/image")
+async def upload_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Upload a general image to Cloudinary
+    
+    - **file**: Image file (JPEG, PNG, GIF, WebP)
+    - **Returns**: Cloudinary URL of the uploaded image
+    
+    Requires authentication. Used for GCash screenshots, chat images, etc.
+    """
+    try:
+        # Validate file is an image
+        if not file.content_type or not file.content_type.startswith("image/"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File must be an image"
+            )
+        
+        # Upload to Cloudinary
+        result = await CloudinaryManager.upload_file(
+            file,
+            folder="general/images",
+            resource_type="image"
+        )
+        
+        logger.info(f"Image uploaded by user {current_user.user_id}")
+        
+        return {
+            "success": True,
+            "message": "Image uploaded successfully",
+            "data": {
+                "url": result["url"],
+                "public_id": result["public_id"],
+                "width": result.get("width"),
+                "height": result.get("height")
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Image upload error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload image: {str(e)}"
+        )
+
+
+@router.post("/file")
+async def upload_general_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Upload a general file to Cloudinary
+    
+    - **file**: Any file type (images, PDFs, documents, etc.)
+    - **Returns**: Cloudinary URL of the uploaded file
+    
+    Requires authentication. Used for attachments, documents, etc.
+    """
+    try:
+        # Upload to Cloudinary
+        result = await CloudinaryManager.upload_file(
+            file,
+            folder="general/files",
+            resource_type="auto"
+        )
+        
+        logger.info(f"File uploaded by user {current_user.user_id}: {file.filename}")
+        
+        return {
+            "success": True,
+            "message": "File uploaded successfully",
+            "data": {
+                "url": result["url"],
+                "public_id": result["public_id"],
+                "format": result.get("format"),
+                "size": result.get("size")
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"File upload error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload file: {str(e)}"
+        )
+
+
 @router.post("/rider-id")
 async def upload_rider_id(
     file: UploadFile = File(...),

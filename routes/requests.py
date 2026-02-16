@@ -14,6 +14,14 @@ from sqlalchemy import and_, text
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
 
+# Helper to safely extract enum value for JSON serialization
+def enum_val(v):
+    """Return .value if it's an enum, otherwise the value itself (or None)."""
+    if v is None:
+        return None
+    return v.value if hasattr(v, "value") else v
+
+
 # ===== SCHEMAS =====
 
 class BillPhotoResponse(BaseModel):
@@ -376,21 +384,21 @@ def get_request_details(
             "rider_id": request.rider_id,
             "rider_name": rider_name,
             "rider_phone": rider_phone,
-            "service_type": request.service_type,
+            "service_type": enum_val(request.service_type),
             "items_description": request.items_description,
             "budget_limit": float(request.budget_limit) if request.budget_limit else None,
             "special_instructions": request.special_instructions,
-            "status": request.status,
+            "status": enum_val(request.status),
             "pickup_location": request.pickup_location,
             "delivery_address": request.delivery_address,
             "delivery_option": request.delivery_option,
-            "payment_method": request.payment_method,
+            "payment_method": enum_val(request.payment_method),
             "item_cost": float(request.item_cost) if request.item_cost else None,
             "service_fee": float(request.service_fee) if request.service_fee else None,
             "total_amount": float(request.total_amount) if request.total_amount else None,
             "gcash_reference": request.gcash_reference,
             "gcash_screenshot_url": request.gcash_screenshot_url,
-            "payment_status": request.payment_status,
+            "payment_status": enum_val(request.payment_status),
             "created_at": request.created_at.isoformat(),
             "updated_at": request.updated_at.isoformat(),
             "completed_at": request.completed_at.isoformat() if request.completed_at else None,
@@ -556,7 +564,7 @@ def accept_request(
         "message": "Request accepted successfully",
         "data": {
             "request_id": request.request_id,
-            "status": request.status,
+            "status": enum_val(request.status),
             "rider_id": request.rider_id
         }
     }
@@ -616,7 +624,7 @@ def update_request_status(
         "message": f"Request status updated from {old_status} to {new_status}",
         "data": {
             "request_id": request.request_id,
-            "status": request.status,
+            "status": enum_val(request.status),
             "updated_at": request.updated_at.isoformat()
         }
     }
@@ -665,7 +673,7 @@ def cancel_request(
         "message": "Request cancelled successfully",
         "data": {
             "request_id": request.request_id,
-            "status": request.status
+            "status": enum_val(request.status)
         }
     }
 
@@ -854,7 +862,7 @@ def decline_request(
         "message": "Request declined. Customer will be notified.",
         "data": {
             "request_id": request.request_id,
-            "status": request.status
+            "status": enum_val(request.status)
         }
     }
 
@@ -922,7 +930,7 @@ def start_delivery(
         "message": "Delivery started! Customer has been notified.",
         "data": {
             "request_id": request.request_id,
-            "status": request.status,
+            "status": enum_val(request.status),
             "updated_at": request.updated_at.isoformat(),
             "customer_name": customer.full_name if customer else None,
             "customer_location": customer_location,
@@ -1004,8 +1012,8 @@ def submit_bill(
             "item_cost": float(request.item_cost),
             "service_fee": float(request.service_fee),
             "total_amount": float(request.total_amount),
-            "payment_method": request.payment_method,
-            "payment_status": request.payment_status
+            "payment_method": enum_val(request.payment_method),
+            "payment_status": enum_val(request.payment_status)
         }
     }
 
@@ -1069,7 +1077,7 @@ def submit_payment(
         "data": {
             "request_id": request.request_id,
             "gcash_reference": request.gcash_reference,
-            "payment_status": request.payment_status
+            "payment_status": enum_val(request.payment_status)
         }
     }
 
@@ -1107,15 +1115,31 @@ def confirm_payment(
     request.payment_status = PaymentStatus.confirmed
     request.updated_at = datetime.utcnow()
 
+    # Auto-complete delivery when payment is confirmed
+    # (confirming payment means rider has delivered & collected payment — task is done)
+    # Allow auto-complete from both 'assigned' and 'in_progress' statuses
+    delivery_auto_completed = False
+    if request.status in [RequestStatus.assigned, RequestStatus.in_progress]:
+        request.status = RequestStatus.completed
+        request.completed_at = datetime.utcnow()
+        delivery_auto_completed = True
+
     db.commit()
     db.refresh(request)
 
+    msg = "Payment confirmed!"
+    if delivery_auto_completed:
+        msg = "Payment confirmed and delivery completed!"
+
     return {
         "success": True,
-        "message": "Payment confirmed!",
+        "message": msg,
         "data": {
             "request_id": request.request_id,
-            "payment_status": request.payment_status,
+            "payment_status": enum_val(request.payment_status),
+            "status": enum_val(request.status),
+            "completed_at": request.completed_at.isoformat() if request.completed_at else None,
+            "delivery_auto_completed": delivery_auto_completed,
             "total_amount": float(request.total_amount) if request.total_amount else None
         }
     }
@@ -1152,7 +1176,9 @@ def complete_delivery(
             detail="Not authorized - this request is not assigned to you"
         )
 
-    if request.status != RequestStatus.in_progress:
+    # Allow completing from both 'assigned' and 'in_progress' statuses
+    # Riders may skip "Start Delivery" and go directly to "Complete Delivery"
+    if request.status not in [RequestStatus.assigned, RequestStatus.in_progress]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot complete delivery on request with status: {request.status}"
@@ -1170,7 +1196,7 @@ def complete_delivery(
         "message": "Delivery completed successfully!",
         "data": {
             "request_id": request.request_id,
-            "status": request.status,
+            "status": enum_val(request.status),
             "completed_at": request.completed_at.isoformat()
         }
     }
@@ -1226,17 +1252,17 @@ def poll_request_status(
         "success": True,
         "data": {
             "request_id": request.request_id,
-            "status": request.status,
+            "status": enum_val(request.status),
             "rider_id": request.rider_id,
             "selected_rider_id": request.selected_rider_id,
             "timed_out": timed_out,
             "rider_info": rider_info,
-            "payment_method": request.payment_method,
+            "payment_method": enum_val(request.payment_method),
             "item_cost": float(request.item_cost) if request.item_cost else None,
             "service_fee": float(request.service_fee) if request.service_fee else None,
             "total_amount": float(request.total_amount) if request.total_amount else None,
             "gcash_reference": request.gcash_reference,
-            "payment_status": request.payment_status,
+            "payment_status": enum_val(request.payment_status),
             "updated_at": request.updated_at.isoformat()
         }
     }
