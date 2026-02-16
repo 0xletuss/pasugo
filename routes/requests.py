@@ -229,21 +229,27 @@ def get_my_requests(
         .limit(page_size) \
         .all()
 
+    result_data = []
+    for req in requests:
+        item = {
+            "request_id": req.request_id,
+            "service_type": req.service_type,
+            "items_description": req.items_description[:100],
+            "status": req.status,
+            "budget_limit": float(req.budget_limit) if req.budget_limit else None,
+            "created_at": req.created_at.isoformat(),
+            "rider_id": req.rider_id
+        }
+        # Include customer name for riders
+        if current_user.user_type == "rider":
+            customer = db.query(User).filter(User.user_id == req.customer_id).first()
+            item["customer_name"] = customer.full_name if customer else "Customer"
+        result_data.append(item)
+
     return {
         "success": True,
         "message": "Requests retrieved successfully",
-        "data": [
-            {
-                "request_id": req.request_id,
-                "service_type": req.service_type,
-                "items_description": req.items_description[:100],
-                "status": req.status,
-                "budget_limit": float(req.budget_limit) if req.budget_limit else None,
-                "created_at": req.created_at.isoformat(),
-                "rider_id": req.rider_id
-            }
-            for req in requests
-        ],
+        "data": result_data,
         "pagination": {
             "page": page,
             "page_size": page_size,
