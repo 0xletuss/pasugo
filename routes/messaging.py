@@ -235,7 +235,15 @@ def create_conversation(
         raise HTTPException(status_code=404, detail="Request not found")
 
     # Verify access
-    if current_user.user_id not in [request.customer_id, request.rider_id or 0]:
+    # NOTE: request.rider_id is the riders table PK, NOT users.user_id
+    # Must resolve rider's user_id through the Rider table for proper comparison
+    rider_user_id = None
+    if request.rider_id:
+        from models.rider import Rider
+        rider = db.query(Rider).filter(Rider.rider_id == request.rider_id).first()
+        if rider:
+            rider_user_id = rider.user_id
+    if current_user.user_id not in [request.customer_id, rider_user_id or 0]:
         raise HTTPException(status_code=403, detail="Access denied to this request")
 
     service = MessageService(db)
