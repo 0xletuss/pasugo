@@ -303,6 +303,8 @@ def get_pending_requests_for_rider(
             "special_instructions": req.special_instructions,
             "pickup_location": req.pickup_location,
             "delivery_address": req.delivery_address,
+            "delivery_option": req.delivery_option,
+            "payment_method": enum_val(req.payment_method),
             "customer_name": customer.full_name if customer else "Unknown",
             "customer_phone": customer.phone_number if customer else None,
             "created_at": req.created_at.isoformat(),
