@@ -399,6 +399,7 @@ def get_request_details(
             "gcash_reference": request.gcash_reference,
             "gcash_screenshot_url": request.gcash_screenshot_url,
             "payment_status": enum_val(request.payment_status),
+            "payment_proof_url": request.payment_proof_url,
             "created_at": request.created_at.isoformat(),
             "updated_at": request.updated_at.isoformat(),
             "completed_at": request.completed_at.isoformat() if request.completed_at else None,
@@ -1085,11 +1086,13 @@ def submit_payment(
 @router.post("/{request_id}/confirm-payment")
 def confirm_payment(
     request_id: int,
+    body: dict = None,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
     Rider confirms payment has been received (GCash verified or COD collected).
+    Requires proof of payment photo URL.
     """
 
     if current_user.user_type != "rider":
@@ -1111,6 +1114,10 @@ def confirm_payment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized - this request is not assigned to you"
         )
+
+    # Save proof of payment URL if provided
+    if body and body.get("payment_proof_url"):
+        request.payment_proof_url = body["payment_proof_url"]
 
     request.payment_status = PaymentStatus.confirmed
     request.updated_at = datetime.utcnow()
@@ -1140,7 +1147,8 @@ def confirm_payment(
             "status": enum_val(request.status),
             "completed_at": request.completed_at.isoformat() if request.completed_at else None,
             "delivery_auto_completed": delivery_auto_completed,
-            "total_amount": float(request.total_amount) if request.total_amount else None
+            "total_amount": float(request.total_amount) if request.total_amount else None,
+            "payment_proof_url": request.payment_proof_url
         }
     }
 

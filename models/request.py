@@ -62,6 +62,7 @@ class Request(Base):
     gcash_reference = Column(String(100), nullable=True)
     gcash_screenshot_url = Column(String(500), nullable=True)
     payment_status = Column(Enum(PaymentStatus), default=PaymentStatus.pending)
+    payment_proof_url = Column(String(500), nullable=True)  # Rider's proof of payment photo
 
     # Rider selection tracking
     selected_rider_id = Column(Integer, ForeignKey("riders.rider_id", ondelete="SET NULL"), nullable=True, index=True)
