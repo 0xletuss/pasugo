@@ -102,24 +102,35 @@ def submit_rating(
     for cat_name, cat_score in categories:
         db.execute(
             text("""
-                INSERT INTO rating_categories (rating_id, category_name, category_score)
-                VALUES (:rating_id, :category_name, :category_score)
+                INSERT INTO rating_categories (rating_id, category_name, category_rating)
+                VALUES (:rating_id, :category_name, :category_rating)
             """),
-            {"rating_id": rating_id, "category_name": cat_name, "category_score": cat_score}
+            {"rating_id": rating_id, "category_name": cat_name, "category_rating": cat_score}
         )
 
     # Insert feedback if provided
     if rating_data.feedback_text:
+        # Determine feedback type based on overall rating
+        if rating_data.overall_rating >= 4:
+            feedback_type = "positive"
+        elif rating_data.overall_rating >= 3:
+            feedback_type = "neutral"
+        else:
+            feedback_type = "negative"
+
         db.execute(
             text("""
-                INSERT INTO rider_feedback (rating_id, rider_id, customer_id, feedback_text, created_at)
-                VALUES (:rating_id, :rider_id, :customer_id, :feedback_text, :created_at)
+                INSERT INTO rider_feedback (rating_id, task_id, rider_id, customer_id, feedback_text, feedback_type, feedback_date, created_at)
+                VALUES (:rating_id, :task_id, :rider_id, :customer_id, :feedback_text, :feedback_type, :feedback_date, :created_at)
             """),
             {
                 "rating_id": rating_id,
+                "task_id": None,
                 "rider_id": request.rider_id,
                 "customer_id": current_user.user_id,
                 "feedback_text": rating_data.feedback_text,
+                "feedback_type": feedback_type,
+                "feedback_date": now,
                 "created_at": now
             }
         )

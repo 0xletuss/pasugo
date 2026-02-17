@@ -17,7 +17,7 @@ class Rating(Base):
     rating_date = Column(DateTime, nullable=False, index=True)
     created_at = Column(DateTime, server_default=func.now())
 
-    # Relationships
+    
     bill_request = relationship("BillRequest", back_populates="rating")
     rider = relationship("Rider", back_populates="ratings")
     customer = relationship("User", back_populates="ratings_given")
