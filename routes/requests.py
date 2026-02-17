@@ -8,8 +8,16 @@ from models.user import User
 from models.request import Request, RequestStatus, ServiceType, RequestBillPhoto, RequestAttachment, PaymentMethod, PaymentStatus
 from models.rider import Rider
 from utils.dependencies import get_current_active_user
+from utils.notification_helper import (
+    notify_rider_selected, notify_rider_accepted, notify_delivery_started,
+    notify_delivery_completed, notify_bill_submitted, notify_payment_received,
+    notify_payment_confirmed, notify_request_cancelled
+)
 from decimal import Decimal
 from sqlalchemy import and_, text
+import logging
+
+notif_logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
 
@@ -568,6 +576,12 @@ def accept_request(
     db.commit()
     db.refresh(request)
 
+    # Notify customer that rider accepted
+    try:
+        notify_rider_accepted(db, request.customer_id, request.request_id, current_user.full_name)
+    except Exception as e:
+        notif_logger.warning(f"Failed to create acceptance notification: {e}")
+
     return {
         "success": True,
         "message": "Request accepted successfully",
@@ -818,6 +832,12 @@ def select_rider_for_request(
     db.commit()
     db.refresh(request)
 
+    # Create notification for the selected rider
+    try:
+        notify_rider_selected(db, rider.user_id, request.request_id, current_user.full_name, enum_val(request.service_type))
+    except Exception as e:
+        notif_logger.warning(f"Failed to create rider notification: {e}")
+
     return {
         "success": True,
         "message": f"Rider {rider.user.full_name} has been notified",
@@ -919,6 +939,12 @@ def start_delivery(
     db.commit()
     db.refresh(request)
 
+    # Notify customer that delivery started
+    try:
+        notify_delivery_started(db, request.customer_id, request.request_id, current_user.full_name)
+    except Exception as e:
+        notif_logger.warning(f"Failed to create delivery started notification: {e}")
+
     # Get customer's latest GPS location for the rider
     customer_location = None
     loc_row = db.execute(
@@ -1013,6 +1039,12 @@ def submit_bill(
     db.commit()
     db.refresh(request)
 
+    # Notify customer about the bill
+    try:
+        notify_bill_submitted(db, request.customer_id, request.request_id, float(total))
+    except Exception as e:
+        notif_logger.warning(f"Failed to create bill notification: {e}")
+
     return {
         "success": True,
         "message": "Bill submitted successfully. Customer has been notified.",
@@ -1080,6 +1112,14 @@ def submit_payment(
     db.commit()
     db.refresh(request)
 
+    # Notify rider about payment
+    try:
+        rider = db.query(Rider).filter(Rider.rider_id == request.rider_id).first()
+        if rider:
+            notify_payment_received(db, rider.user_id, request.request_id, float(request.total_amount or 0))
+    except Exception as e:
+        notif_logger.warning(f"Failed to create payment notification: {e}")
+
     return {
         "success": True,
         "message": "GCash payment submitted. Rider will verify.",
@@ -1129,6 +1169,12 @@ def confirm_payment(
 
     request.payment_status = PaymentStatus.confirmed
     request.updated_at = datetime.utcnow()
+
+    # Notify customer about payment confirmation
+    try:
+        notify_payment_confirmed(db, request.customer_id, request.request_id)
+    except Exception as e:
+        notif_logger.warning(f"Failed to create payment confirmation notification: {e}")
 
     # Auto-complete delivery when payment is confirmed
     # (confirming payment means rider has delivered & collected payment — task is done)
@@ -1206,6 +1252,12 @@ def complete_delivery(
 
     db.commit()
     db.refresh(request)
+
+    # Notify customer about delivery completion
+    try:
+        notify_delivery_completed(db, request.customer_id, request.request_id)
+    except Exception as e:
+        notif_logger.warning(f"Failed to create delivery completion notification: {e}")
 
     return {
         "success": True,

@@ -52,7 +52,10 @@ class MessageService:
         return convo
 
     def get_user_conversations(self, user_id: int, user_type: str) -> list:
-        """Get all active conversations with last message + unread count."""
+        """Get all active conversations with last message + unread count + other user name."""
+        from models.user import User
+        from models.rider import Rider
+
         query = self.db.query(Conversation).filter(
             Conversation.status != "archived"
         )
@@ -60,7 +63,6 @@ class MessageService:
         if user_type == "customer":
             query = query.filter(Conversation.customer_id == user_id)
         elif user_type == "rider":
-            from models.rider import Rider
             query = query.join(Rider, Rider.rider_id == Conversation.rider_id).filter(
                 Rider.user_id == user_id
             )
@@ -97,6 +99,19 @@ class MessageService:
                 .scalar()
             )
 
+            # Resolve the OTHER user's name
+            other_user_name = None
+            if user_type == "customer" and convo.rider_id:
+                rider = self.db.query(Rider).filter(Rider.rider_id == convo.rider_id).first()
+                if rider:
+                    rider_user = self.db.query(User).filter(User.user_id == rider.user_id).first()
+                    if rider_user:
+                        other_user_name = rider_user.full_name
+            elif user_type == "rider" and convo.customer_id:
+                customer = self.db.query(User).filter(User.user_id == convo.customer_id).first()
+                if customer:
+                    other_user_name = customer.full_name
+
             result.append({
                 "conversation_id":   convo.conversation_id,
                 "request_id":        convo.request_id,
@@ -107,6 +122,7 @@ class MessageService:
                 "last_message_at":   convo.last_message_at.isoformat() if convo.last_message_at else None,
                 "unread_count":      unread or 0,
                 "last_message":      last_msg.content if last_msg else None,
+                "other_user_name":   other_user_name,
             })
 
         return result

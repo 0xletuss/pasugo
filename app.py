@@ -32,6 +32,9 @@ from routes.requests import router as requests_router
 # ✅ Import messaging router
 from routes.messaging import router as messaging_router
 
+# ✅ Import ratings router
+from routes.ratings import router as ratings_router
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,
@@ -148,6 +151,9 @@ app.include_router(requests_router, prefix="/api")
 
 # ✅ Messaging router (WebSocket + REST)
 app.include_router(messaging_router, prefix="/api")
+
+# ✅ Ratings router
+app.include_router(ratings_router, prefix="/api")
 
 
 # Startup event
