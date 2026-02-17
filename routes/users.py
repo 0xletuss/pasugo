@@ -16,7 +16,9 @@ class UserResponse(BaseModel):
     phone_number: str
     user_type: str
     address: str = None
+    profile_photo_url: str = None
     is_active: bool
+    created_at: str = None
 
     class Config:
         from_attributes = True
@@ -26,6 +28,7 @@ class UpdateUserRequest(BaseModel):
     full_name: str = None
     phone_number: str = None
     address: str = None
+    profile_photo_url: str = None
 
 
 @router.get("/me", response_model=UserResponse)
@@ -61,6 +64,9 @@ def update_current_user(
     if request.address:
         current_user.address = request.address
     
+    if request.profile_photo_url is not None:
+        current_user.profile_photo_url = request.profile_photo_url
+    
     db.commit()
     db.refresh(current_user)
     
@@ -72,7 +78,8 @@ def update_current_user(
             "full_name": current_user.full_name,
             "email": current_user.email,
             "phone_number": current_user.phone_number,
-            "address": current_user.address
+            "address": current_user.address,
+            "profile_photo_url": current_user.profile_photo_url
         }
     }
 

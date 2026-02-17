@@ -155,6 +155,9 @@ app.include_router(messaging_router, prefix="/api")
 # ✅ Ratings router
 app.include_router(ratings_router, prefix="/api")
 
+# ✅ Addresses router
+app.include_router(addresses_router, prefix="/api")
+
 
 # Startup event
 @app.on_event("startup")
