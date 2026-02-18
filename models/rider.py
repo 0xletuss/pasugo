@@ -26,6 +26,8 @@ class Rider(Base):
     rating = Column(DECIMAL(3, 2), default=0.00, index=True)
     total_tasks_completed = Column(Integer, default=0)
     total_earnings = Column(DECIMAL(10, 2), default=0.00)
+    gcash_name = Column(String(255), nullable=True)
+    gcash_number = Column(String(20), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     # Relationships

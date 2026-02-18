@@ -37,6 +37,11 @@ class UpdateRiderStatusRequest(BaseModel):
     status: RiderStatus
 
 
+class UpdateGCashInfoRequest(BaseModel):
+    gcash_name: Optional[str] = None
+    gcash_number: Optional[str] = None
+
+
 # ============================================================================
 # RIDER REGISTRATION WITH FILE UPLOAD
 # ============================================================================
@@ -271,12 +276,44 @@ def get_rider_profile(
             "license_number": rider.license_number,
             "status": rider.availability_status,
             "rating": float(rider.rating) if rider.rating else 0,
-            "total_deliveries": rider.total_deliveries,
-            "is_verified": rider.is_verified,
-            "current_location": {
-                "lat": rider.current_location_lat,
-                "lng": rider.current_location_lng
-            } if rider.current_location_lat else None
+            "total_tasks_completed": rider.total_tasks_completed or 0,
+            "total_earnings": float(rider.total_earnings) if rider.total_earnings else 0,
+            "gcash_name": rider.gcash_name,
+            "gcash_number": rider.gcash_number
+        }
+    }
+
+
+@router.put("/gcash")
+def update_gcash_info(
+    request: UpdateGCashInfoRequest,
+    current_user: User = Depends(require_role(["rider"])),
+    db: Session = Depends(get_db)
+):
+    """Update rider's GCash payment information"""
+    
+    rider = db.query(Rider).filter(Rider.user_id == current_user.user_id).first()
+    
+    if not rider:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Rider profile not found"
+        )
+    
+    if request.gcash_name is not None:
+        rider.gcash_name = request.gcash_name.strip()
+    if request.gcash_number is not None:
+        rider.gcash_number = request.gcash_number.strip()
+    
+    db.commit()
+    db.refresh(rider)
+    
+    return {
+        "success": True,
+        "message": "GCash info updated successfully",
+        "data": {
+            "gcash_name": rider.gcash_name,
+            "gcash_number": rider.gcash_number
         }
     }
 

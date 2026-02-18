@@ -856,7 +856,9 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
                     "full_name": user.full_name,
                     "user_type": user.user_type.value if hasattr(user.user_type, 'value') else str(user.user_type),
                     "phone_number": user.phone_number,
-                    "address": user.address
+                    "address": user.address,
+                    "profile_photo_url": user.profile_photo_url,
+                    "created_at": user.created_at.isoformat() if user.created_at else None
                 }
             }
         }
