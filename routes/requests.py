@@ -638,6 +638,11 @@ def update_request_status(
 
     if new_status == RequestStatus.completed:
         request.completed_at = datetime.utcnow()
+        # Increment rider's completed tasks counter
+        if request.rider_id:
+            rider = db.query(Rider).filter(Rider.rider_id == request.rider_id).first()
+            if rider:
+                rider.total_tasks_completed = (rider.total_tasks_completed or 0) + 1
 
     db.commit()
     db.refresh(request)
@@ -1184,6 +1189,11 @@ def confirm_payment(
         request.status = RequestStatus.completed
         request.completed_at = datetime.utcnow()
         delivery_auto_completed = True
+        # Increment rider's completed tasks counter
+        if request.rider_id:
+            rider = db.query(Rider).filter(Rider.rider_id == request.rider_id).first()
+            if rider:
+                rider.total_tasks_completed = (rider.total_tasks_completed or 0) + 1
 
     db.commit()
     db.refresh(request)
@@ -1249,6 +1259,11 @@ def complete_delivery(
     request.status = RequestStatus.completed
     request.completed_at = datetime.utcnow()
     request.updated_at = datetime.utcnow()
+
+    # Increment rider's completed tasks counter
+    rider = db.query(Rider).filter(Rider.rider_id == request.rider_id).first()
+    if rider:
+        rider.total_tasks_completed = (rider.total_tasks_completed or 0) + 1
 
     db.commit()
     db.refresh(request)
