@@ -13,6 +13,7 @@ from models.rider import Rider, RiderStatus
 from models.request import Request, RequestStatus, ServiceType
 from models.notification import Notification
 from models.admin_user import AdminUser
+from models.remittance import Remittance, RemittanceStatus
 from utils.dependencies import get_current_active_user
 from datetime import datetime, date, timedelta
 from decimal import Decimal
@@ -306,6 +307,12 @@ def list_riders(
             cast(Request.completed_at, Date) == date.today(),
         ).scalar() or 0
 
+        # Today's remittance status
+        today_rem = db.query(Remittance).filter(
+            Remittance.rider_id == rider.rider_id,
+            Remittance.remittance_date == date.today(),
+        ).first()
+
         sf = float(stats.total_service_fee)
         result.append({
             "rider_id": rider.rider_id,
@@ -326,6 +333,7 @@ def list_riders(
             "total_amount_handled": float(stats.total_amount),
             "gcash_name": rider.gcash_name,
             "gcash_number": rider.gcash_number,
+            "remit_status": today_rem.status.value if today_rem else ("pending" if today_deliveries > 0 else "no_earnings"),
             "created_at": str(rider.created_at) if rider.created_at else None,
         })
 
@@ -656,5 +664,457 @@ def admin_me(
             "email": admin.email,
             "user_type": admin.user_type.value,
             "role": admin_profile.role.value if admin_profile else "admin",
+        },
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SHARES & REMITTANCE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _build_daily_snapshot(db: Session, target_date: date):
+    """
+    Compute each rider's completed-request totals for *target_date*.
+    Returns a list of dicts ready for the frontend table.
+    """
+    rows = (
+        db.query(
+            Rider.rider_id,
+            User.full_name,
+            Rider.vehicle_plate,
+            func.count(Request.request_id).label("total_deliveries"),
+            func.coalesce(func.sum(Request.service_fee), 0).label("total_service_fee"),
+        )
+        .join(User, Rider.user_id == User.user_id)
+        .outerjoin(
+            Request,
+            and_(
+                Request.rider_id == Rider.rider_id,
+                Request.status == RequestStatus.completed,
+                cast(Request.completed_at, Date) == target_date,
+            ),
+        )
+        .group_by(Rider.rider_id, User.full_name, Rider.vehicle_plate)
+        .all()
+    )
+
+    # Fetch existing remittance records for that date
+    existing = {
+        r.rider_id: r
+        for r in db.query(Remittance).filter(Remittance.remittance_date == target_date).all()
+    }
+
+    result = []
+    for row in rows:
+        fee = Decimal(str(row.total_service_fee))
+        rider_share = (fee * RIDER_SHARE_PCT).quantize(Decimal("0.01"))
+        admin_share = (fee * ADMIN_SHARE_PCT).quantize(Decimal("0.01"))
+        rem = existing.get(row.rider_id)
+
+        result.append({
+            "rider_id": row.rider_id,
+            "rider_name": row.full_name,
+            "vehicle_plate": row.vehicle_plate or "",
+            "total_deliveries": row.total_deliveries,
+            "total_service_fee": float(fee),
+            "rider_share": float(rider_share),
+            "admin_share": float(admin_share),
+            "status": rem.status.value if rem else ("pending" if fee > 0 else "no_earnings"),
+            "remitted_at": rem.remitted_at.isoformat() if rem and rem.remitted_at else None,
+            "remittance_id": rem.remittance_id if rem else None,
+            "notes": rem.notes if rem else None,
+        })
+
+    # Sort: pending with earnings first, then remitted, then no earnings
+    priority = {"pending": 0, "remitted": 1, "waived": 1, "no_earnings": 2}
+    result.sort(key=lambda x: (priority.get(x["status"], 9), -x["admin_share"]))
+    return result
+
+
+@router.get("/remittances/today")
+def remittances_today(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+    target_date: Optional[str] = Query(None, description="YYYY-MM-DD, defaults to today"),
+):
+    """
+    Show every rider's earnings & remittance status for a specific date (default: today).
+    """
+    try:
+        d = datetime.strptime(target_date, "%Y-%m-%d").date() if target_date else date.today()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format; expected YYYY-MM-DD")
+
+    snapshot = _build_daily_snapshot(db, d)
+
+    total_admin = sum(r["admin_share"] for r in snapshot)
+    total_collected = sum(r["admin_share"] for r in snapshot if r["status"] == "remitted")
+    total_pending = sum(r["admin_share"] for r in snapshot if r["status"] == "pending")
+
+    return {
+        "success": True,
+        "data": {
+            "date": d.isoformat(),
+            "riders": snapshot,
+            "summary": {
+                "total_admin_share": round(total_admin, 2),
+                "total_collected": round(total_collected, 2),
+                "total_pending": round(total_pending, 2),
+                "riders_pending": sum(1 for r in snapshot if r["status"] == "pending"),
+                "riders_remitted": sum(1 for r in snapshot if r["status"] == "remitted"),
+            },
+        },
+    }
+
+
+@router.post("/remittances/{rider_id}/remit")
+def mark_remitted(
+    rider_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+    target_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    notes: Optional[str] = Query(None),
+):
+    """
+    Mark a rider's admin-share as collected (remitted) for a given date.
+    Creates the remittance record if it doesn't exist, then sets status='remitted'.
+    """
+    try:
+        d = datetime.strptime(target_date, "%Y-%m-%d").date() if target_date else date.today()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    rider = db.query(Rider).filter(Rider.rider_id == rider_id).first()
+    if not rider:
+        raise HTTPException(status_code=404, detail="Rider not found")
+
+    # Compute day's totals
+    agg = (
+        db.query(
+            func.count(Request.request_id).label("cnt"),
+            func.coalesce(func.sum(Request.service_fee), 0).label("fee"),
+        )
+        .filter(
+            Request.rider_id == rider_id,
+            Request.status == RequestStatus.completed,
+            cast(Request.completed_at, Date) == d,
+        )
+        .one()
+    )
+    total_fee = Decimal(str(agg.fee))
+    if total_fee <= 0:
+        raise HTTPException(status_code=400, detail="No earnings to remit for this date")
+
+    # Upsert remittance record
+    rem = (
+        db.query(Remittance)
+        .filter(Remittance.rider_id == rider_id, Remittance.remittance_date == d)
+        .first()
+    )
+    if rem and rem.status == RemittanceStatus.remitted:
+        raise HTTPException(status_code=400, detail="Already remitted for this date")
+
+    rider_share = (total_fee * RIDER_SHARE_PCT).quantize(Decimal("0.01"))
+    admin_share = (total_fee * ADMIN_SHARE_PCT).quantize(Decimal("0.01"))
+
+    if not rem:
+        rem = Remittance(
+            rider_id=rider_id,
+            remittance_date=d,
+            total_deliveries=agg.cnt,
+            total_service_fee=total_fee,
+            rider_share=rider_share,
+            admin_share=admin_share,
+            status=RemittanceStatus.remitted,
+            remitted_at=datetime.utcnow(),
+            received_by=admin.user_id,
+            notes=notes,
+        )
+        db.add(rem)
+    else:
+        rem.total_deliveries = agg.cnt
+        rem.total_service_fee = total_fee
+        rem.rider_share = rider_share
+        rem.admin_share = admin_share
+        rem.status = RemittanceStatus.remitted
+        rem.remitted_at = datetime.utcnow()
+        rem.received_by = admin.user_id
+        if notes:
+            rem.notes = notes
+
+    db.commit()
+    db.refresh(rem)
+
+    return {
+        "success": True,
+        "message": f"Remittance of ₱{float(admin_share):.2f} collected from rider #{rider_id}",
+        "data": {
+            "remittance_id": rem.remittance_id,
+            "rider_id": rider_id,
+            "date": d.isoformat(),
+            "total_service_fee": float(total_fee),
+            "rider_share": float(rider_share),
+            "admin_share": float(admin_share),
+            "status": rem.status.value,
+            "remitted_at": rem.remitted_at.isoformat(),
+        },
+    }
+
+
+@router.post("/remittances/{rider_id}/waive")
+def waive_remittance(
+    rider_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+    target_date: Optional[str] = Query(None),
+    notes: Optional[str] = Query(None),
+):
+    """Waive the admin share for a rider on a given date."""
+    try:
+        d = datetime.strptime(target_date, "%Y-%m-%d").date() if target_date else date.today()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    rider = db.query(Rider).filter(Rider.rider_id == rider_id).first()
+    if not rider:
+        raise HTTPException(status_code=404, detail="Rider not found")
+
+    rem = (
+        db.query(Remittance)
+        .filter(Remittance.rider_id == rider_id, Remittance.remittance_date == d)
+        .first()
+    )
+    if rem and rem.status == RemittanceStatus.remitted:
+        raise HTTPException(status_code=400, detail="Already remitted")
+
+    if not rem:
+        agg = (
+            db.query(
+                func.count(Request.request_id).label("cnt"),
+                func.coalesce(func.sum(Request.service_fee), 0).label("fee"),
+            )
+            .filter(
+                Request.rider_id == rider_id,
+                Request.status == RequestStatus.completed,
+                cast(Request.completed_at, Date) == d,
+            )
+            .one()
+        )
+        total_fee = Decimal(str(agg.fee))
+        rem = Remittance(
+            rider_id=rider_id,
+            remittance_date=d,
+            total_deliveries=agg.cnt,
+            total_service_fee=total_fee,
+            rider_share=(total_fee * RIDER_SHARE_PCT).quantize(Decimal("0.01")),
+            admin_share=(total_fee * ADMIN_SHARE_PCT).quantize(Decimal("0.01")),
+        )
+        db.add(rem)
+
+    rem.status = RemittanceStatus.waived
+    rem.remitted_at = datetime.utcnow()
+    rem.received_by = admin.user_id
+    if notes:
+        rem.notes = notes
+
+    db.commit()
+    return {"success": True, "message": "Remittance waived"}
+
+
+@router.get("/remittances/history")
+def remittances_history(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+    rider_id: Optional[int] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(30, ge=1, le=100),
+):
+    """Paginated history of all remittance records with filters."""
+    q = db.query(Remittance).join(Rider, Remittance.rider_id == Rider.rider_id).join(User, Rider.user_id == User.user_id)
+
+    if rider_id:
+        q = q.filter(Remittance.rider_id == rider_id)
+    if status_filter:
+        try:
+            q = q.filter(Remittance.status == RemittanceStatus(status_filter))
+        except ValueError:
+            pass
+    if date_from:
+        try:
+            q = q.filter(Remittance.remittance_date >= datetime.strptime(date_from, "%Y-%m-%d").date())
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            q = q.filter(Remittance.remittance_date <= datetime.strptime(date_to, "%Y-%m-%d").date())
+        except ValueError:
+            pass
+
+    total = q.count()
+    records = q.order_by(desc(Remittance.remittance_date), desc(Remittance.created_at)).offset((page - 1) * limit).limit(limit).all()
+
+    items = []
+    for r in records:
+        rider = r.rider
+        user = rider.user if rider else None
+        items.append({
+            "remittance_id": r.remittance_id,
+            "rider_id": r.rider_id,
+            "rider_name": user.full_name if user else "Unknown",
+            "date": r.remittance_date.isoformat(),
+            "total_deliveries": r.total_deliveries,
+            "total_service_fee": float(r.total_service_fee),
+            "rider_share": float(r.rider_share),
+            "admin_share": float(r.admin_share),
+            "status": r.status.value,
+            "remitted_at": r.remitted_at.isoformat() if r.remitted_at else None,
+            "notes": r.notes,
+        })
+
+    return {
+        "success": True,
+        "data": {
+            "items": items,
+            "total": total,
+            "page": page,
+            "pages": (total + limit - 1) // limit,
+        },
+    }
+
+
+@router.get("/shares/summary")
+def shares_summary(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+    days: int = Query(30, ge=1, le=365),
+):
+    """
+    Overall shares analytics: lifetime & per-period totals.
+    """
+    since = date.today() - timedelta(days=days)
+
+    # Lifetime from completed requests
+    lifetime = db.query(
+        func.coalesce(func.sum(Request.service_fee), 0),
+        func.count(Request.request_id),
+    ).filter(Request.status == RequestStatus.completed).one()
+
+    lifetime_fee = Decimal(str(lifetime[0]))
+    lifetime_count = lifetime[1]
+
+    # Period from completed requests
+    period = db.query(
+        func.coalesce(func.sum(Request.service_fee), 0),
+        func.count(Request.request_id),
+    ).filter(
+        Request.status == RequestStatus.completed,
+        cast(Request.completed_at, Date) >= since,
+    ).one()
+
+    period_fee = Decimal(str(period[0]))
+    period_count = period[1]
+
+    # Remittance collection stats
+    collected = db.query(
+        func.coalesce(func.sum(Remittance.admin_share), 0),
+    ).filter(
+        Remittance.status == RemittanceStatus.remitted,
+    ).scalar()
+    collected = Decimal(str(collected))
+
+    collected_period = db.query(
+        func.coalesce(func.sum(Remittance.admin_share), 0),
+    ).filter(
+        Remittance.status == RemittanceStatus.remitted,
+        Remittance.remittance_date >= since,
+    ).scalar()
+    collected_period = Decimal(str(collected_period))
+
+    # Per-rider breakdown (period)
+    rider_rows = (
+        db.query(
+            Rider.rider_id,
+            User.full_name,
+            func.count(Request.request_id).label("deliveries"),
+            func.coalesce(func.sum(Request.service_fee), 0).label("fee"),
+        )
+        .join(User, Rider.user_id == User.user_id)
+        .outerjoin(
+            Request,
+            and_(
+                Request.rider_id == Rider.rider_id,
+                Request.status == RequestStatus.completed,
+                cast(Request.completed_at, Date) >= since,
+            ),
+        )
+        .group_by(Rider.rider_id, User.full_name)
+        .having(func.count(Request.request_id) > 0)
+        .order_by(desc("fee"))
+        .limit(20)
+        .all()
+    )
+
+    rider_breakdown = []
+    for rr in rider_rows:
+        fee = Decimal(str(rr.fee))
+        rider_breakdown.append({
+            "rider_id": rr.rider_id,
+            "rider_name": rr.full_name,
+            "deliveries": rr.deliveries,
+            "total_fee": float(fee),
+            "rider_share": float((fee * RIDER_SHARE_PCT).quantize(Decimal("0.01"))),
+            "admin_share": float((fee * ADMIN_SHARE_PCT).quantize(Decimal("0.01"))),
+        })
+
+    # Daily trend (last N days)
+    daily_trend = (
+        db.query(
+            cast(Request.completed_at, Date).label("day"),
+            func.count(Request.request_id).label("cnt"),
+            func.coalesce(func.sum(Request.service_fee), 0).label("fee"),
+        )
+        .filter(
+            Request.status == RequestStatus.completed,
+            cast(Request.completed_at, Date) >= since,
+        )
+        .group_by("day")
+        .order_by("day")
+        .all()
+    )
+    trend = [
+        {
+            "date": row.day.isoformat() if row.day else None,
+            "deliveries": row.cnt,
+            "total_fee": float(row.fee),
+            "admin_share": float((Decimal(str(row.fee)) * ADMIN_SHARE_PCT).quantize(Decimal("0.01"))),
+            "rider_share": float((Decimal(str(row.fee)) * RIDER_SHARE_PCT).quantize(Decimal("0.01"))),
+        }
+        for row in daily_trend
+    ]
+
+    return {
+        "success": True,
+        "data": {
+            "lifetime": {
+                "total_service_fee": float(lifetime_fee),
+                "admin_share": float((lifetime_fee * ADMIN_SHARE_PCT).quantize(Decimal("0.01"))),
+                "rider_share": float((lifetime_fee * RIDER_SHARE_PCT).quantize(Decimal("0.01"))),
+                "total_deliveries": lifetime_count,
+                "total_collected": float(collected),
+                "uncollected": float((lifetime_fee * ADMIN_SHARE_PCT).quantize(Decimal("0.01")) - collected),
+            },
+            "period": {
+                "days": days,
+                "total_service_fee": float(period_fee),
+                "admin_share": float((period_fee * ADMIN_SHARE_PCT).quantize(Decimal("0.01"))),
+                "rider_share": float((period_fee * RIDER_SHARE_PCT).quantize(Decimal("0.01"))),
+                "total_deliveries": period_count,
+                "total_collected": float(collected_period),
+            },
+            "rider_breakdown": rider_breakdown,
+            "daily_trend": trend,
         },
     }

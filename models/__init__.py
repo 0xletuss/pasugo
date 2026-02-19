@@ -14,6 +14,7 @@ from .user_preference import UserPreference
 from .rider_task import RiderTask
 from .password_reset_token import PasswordResetToken
 from .request import Request, ServiceType, RequestStatus, RequestBillPhoto, RequestAttachment
+from .remittance import Remittance, RemittanceStatus
 from .messaging_models import (
     Conversation,
     Message,
@@ -45,6 +46,8 @@ __all__ = [
     "UserPreference",
     "RiderTask",
     "PasswordResetToken",
+    "Remittance",
+    "RemittanceStatus",
     "Conversation",
     "Message",
     "MessageReadReceipt",
