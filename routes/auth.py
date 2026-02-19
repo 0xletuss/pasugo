@@ -276,6 +276,26 @@ def register_request_otp(request: RegisterOTPRequest, db: Session = Depends(get_
                 detail="Email already registered"
             )
         
+        # ── DEDUP: reuse a recent, still-valid OTP (prevents race from double-tap) ──
+        recent_cutoff = datetime.utcnow() - timedelta(seconds=60)
+        existing_otp = db.query(OTP).filter(
+            OTP.otp_type == OTPType.registration,
+            OTP.phone_number == email,
+            OTP.is_verified == False,
+            OTP.expires_at > datetime.utcnow(),
+            OTP.created_at >= recent_cutoff,
+        ).order_by(OTP.created_at.desc()).first()
+        
+        if existing_otp:
+            logger.info(f"Registration OTP reused (dedup) for: {email}")
+            return {
+                "success": True,
+                "message": "OTP already sent to your email. Please check your inbox.",
+                "data": {
+                    "email": email
+                }
+            }
+        
         # Generate OTP
         otp_code = otp_manager.generate_otp()
         expires_at = otp_manager.get_expiry_time()
@@ -514,36 +534,49 @@ def forgot_password_request_otp(request: ForgotPasswordOTPRequest, db: Session =
         user = db.query(User).filter(User.email == email).first()
         
         if user:
-            # Generate OTP
-            otp_code = otp_manager.generate_otp()
-            expires_at = otp_manager.get_expiry_time()
-            
-            # Delete any existing password reset OTPs for this user
-            db.query(OTP).filter(
+            # ── DEDUP: reuse a recent, still-valid OTP (prevents race from double-tap) ──
+            recent_cutoff = datetime.utcnow() - timedelta(seconds=60)
+            existing_otp = db.query(OTP).filter(
                 OTP.user_id == user.user_id,
-                OTP.otp_type == OTPType.password_reset
-            ).delete()
+                OTP.otp_type == OTPType.password_reset,
+                OTP.is_verified == False,
+                OTP.expires_at > datetime.utcnow(),
+                OTP.created_at >= recent_cutoff,
+            ).first()
             
-            # Create OTP record
-            new_otp = OTP(
-                user_id=user.user_id,
-                otp_code=otp_code,
-                otp_type=OTPType.password_reset,
-                phone_number=user.phone_number,
-                expires_at=expires_at,
-                is_verified=False,
-                attempts=0
-            )
-            db.add(new_otp)
-            db.commit()
-            
-            # Send OTP via Brevo (only if configured)
-            if brevo_sender:  # ✅ Check if brevo_sender exists
-                result = brevo_sender.send_password_reset_otp(email, otp_code)
-                if not result['success']:
-                    logger.warning(f"Failed to send password reset OTP to: {email}")
+            if not existing_otp:
+                # Generate OTP
+                otp_code = otp_manager.generate_otp()
+                expires_at = otp_manager.get_expiry_time()
+                
+                # Delete any existing password reset OTPs for this user
+                db.query(OTP).filter(
+                    OTP.user_id == user.user_id,
+                    OTP.otp_type == OTPType.password_reset
+                ).delete()
+                
+                # Create OTP record
+                new_otp = OTP(
+                    user_id=user.user_id,
+                    otp_code=otp_code,
+                    otp_type=OTPType.password_reset,
+                    phone_number=user.phone_number,
+                    expires_at=expires_at,
+                    is_verified=False,
+                    attempts=0
+                )
+                db.add(new_otp)
+                db.commit()
+                
+                # Send OTP via Brevo (only if configured)
+                if brevo_sender:
+                    result = brevo_sender.send_password_reset_otp(email, otp_code)
+                    if not result['success']:
+                        logger.warning(f"Failed to send password reset OTP to: {email}")
+                else:
+                    logger.info(f"Email service not configured. Password reset OTP for {email}: {otp_code}")
             else:
-                logger.info(f"Email service not configured. Password reset OTP for {email}: {otp_code}")
+                logger.info(f"Password reset OTP reused (dedup) for: {email}")
         
         # Always return generic message for security
         logger.info(f"Password reset OTP requested for: {email}")

@@ -18,6 +18,7 @@ Usage in routes:
 
 import json
 import logging
+import time
 from typing import Optional, Any
 
 import redis
@@ -26,21 +27,29 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Redis connection (singleton)
+# Redis connection (singleton with retry cooldown)
 # ---------------------------------------------------------------------------
 
 _redis_client: Optional[redis.Redis] = None
+_redis_last_fail: float = 0.0       # epoch of last connection failure
+_REDIS_RETRY_INTERVAL = 60.0        # seconds before retrying after a failure
+_redis_warned: bool = False          # only warn once per cooldown period
 
 
 def _get_redis() -> Optional[redis.Redis]:
     """Return a Redis client, or None if Redis is disabled / unreachable."""
-    global _redis_client
+    global _redis_client, _redis_last_fail, _redis_warned
 
     if not settings.REDIS_ENABLED:
         return None
 
     if _redis_client is not None:
         return _redis_client
+
+    # Don't retry too fast after a failure
+    now = time.time()
+    if now - _redis_last_fail < _REDIS_RETRY_INTERVAL:
+        return None
 
     try:
         _redis_client = redis.from_url(
@@ -53,10 +62,14 @@ def _get_redis() -> Optional[redis.Redis]:
         # Quick ping to verify connectivity
         _redis_client.ping()
         logger.info("✅ Redis connected successfully")
+        _redis_warned = False
         return _redis_client
     except Exception as e:
-        logger.warning(f"⚠️ Redis unavailable – running without cache: {e}")
+        _redis_last_fail = now
         _redis_client = None
+        if not _redis_warned:
+            logger.warning(f"⚠️ Redis unavailable – running without cache: {e}")
+            _redis_warned = True
         return None
 
 
