@@ -40,6 +40,9 @@ from routes.ratings import router as ratings_router
 # ✅ Import addresses router
 from routes.addresses import router as addresses_router
 
+# ✅ Import admin dashboard router
+from routes.admin import router as admin_router
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,
@@ -166,6 +169,9 @@ app.include_router(ratings_router, prefix="/api")
 
 # ✅ Addresses router
 app.include_router(addresses_router, prefix="/api")
+
+# ✅ Admin dashboard router
+app.include_router(admin_router, prefix="/api")
 
 
 # Startup event
