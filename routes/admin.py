@@ -401,7 +401,7 @@ def get_rider_detail(
         .all()
     )
 
-    total_sf = sum(d.service_fee for d in deliveries) if deliveries else 0
+    total_sf = sum(d["service_fee"] for d in deliveries) if deliveries else 0
 
     return {
         "success": True,
