@@ -16,6 +16,7 @@ from utils.notification_helper import (
 from decimal import Decimal
 from sqlalchemy import and_, text, func
 from utils.cache import cache
+from utils.distance import compute_fee_between, calculate_service_fee
 import logging
 
 notif_logger = logging.getLogger(__name__)
@@ -1008,12 +1009,67 @@ def start_delivery(
 
 class SubmitBillRequest(BaseModel):
     item_cost: float
-    service_fee: float
+    service_fee: Optional[float] = None  # Auto-calculated from distance if omitted
 
 
 class SubmitGcashPaymentRequest(BaseModel):
     gcash_reference: str
     gcash_screenshot_url: Optional[str] = None
+
+
+@router.get("/{request_id}/calculate-fee")
+def calculate_fee(
+    request_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Calculate the service fee for a request based on driving distance
+    between the rider's current location and the customer's location.
+
+    Fee tiers:
+      1-3 km  = ₱30
+      3-6 km  = ₱60
+      6-9 km  = ₱90
+      +₱30 per additional 3 km
+    """
+    request = db.query(Request).filter(Request.request_id == request_id).first()
+    if not request:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+
+    # Get rider's latest location
+    rider_loc = db.execute(
+        text("SELECT latitude, longitude FROM user_locations WHERE user_id = :uid ORDER BY created_at DESC LIMIT 1"),
+        {"uid": current_user.user_id}
+    ).fetchone()
+
+    # Get customer's location (saved at request creation)
+    customer_loc = db.execute(
+        text("SELECT latitude, longitude FROM user_locations WHERE user_id = :uid ORDER BY created_at DESC LIMIT 1"),
+        {"uid": request.customer_id}
+    ).fetchone()
+
+    if not rider_loc or not customer_loc:
+        # No GPS available — return minimum fee
+        return {
+            "success": True,
+            "data": {
+                "request_id": request_id,
+                "distance_km": None,
+                "duration_minutes": None,
+                "service_fee": 30.0,
+                "fee_source": "default_minimum",
+                "message": "Could not determine locations — minimum fee applied"
+            }
+        }
+
+    result = compute_fee_between(
+        float(rider_loc[0]), float(rider_loc[1]),
+        float(customer_loc[0]), float(customer_loc[1])
+    )
+    result["request_id"] = request_id
+
+    return {"success": True, "data": result}
 
 
 @router.post("/{request_id}/submit-bill")
@@ -1055,7 +1111,34 @@ def submit_bill(
         )
 
     item_cost = Decimal(str(bill_data.item_cost))
-    service_fee = Decimal(str(bill_data.service_fee))
+
+    # Auto-calculate service fee from distance if not provided
+    if bill_data.service_fee is not None:
+        service_fee = Decimal(str(bill_data.service_fee))
+    else:
+        # Try to compute from GPS locations
+        try:
+            rider_loc = db.execute(
+                text("SELECT latitude, longitude FROM user_locations WHERE user_id = :uid ORDER BY created_at DESC LIMIT 1"),
+                {"uid": current_user.user_id}
+            ).fetchone()
+            customer_loc = db.execute(
+                text("SELECT latitude, longitude FROM user_locations WHERE user_id = :uid ORDER BY created_at DESC LIMIT 1"),
+                {"uid": request.customer_id}
+            ).fetchone()
+
+            if rider_loc and customer_loc:
+                fee_result = compute_fee_between(
+                    float(rider_loc[0]), float(rider_loc[1]),
+                    float(customer_loc[0]), float(customer_loc[1])
+                )
+                service_fee = Decimal(str(fee_result["service_fee"]))
+            else:
+                service_fee = Decimal("30.00")  # minimum fee fallback
+        except Exception as e:
+            notif_logger.warning(f"Auto fee calculation failed, using minimum: {e}")
+            service_fee = Decimal("30.00")
+
     total = item_cost + service_fee
 
     request.item_cost = item_cost

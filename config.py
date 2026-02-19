@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "true").lower() == "true"
     
+    # OpenRouteService (distance calculation)
+    ORS_API_KEY: str = os.getenv("ORS_API_KEY", "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjcyZTc2YWMyODUwYzQ3NDNiYmJlNzU3YzNlYTYyZWQ0IiwiaCI6Im11cm11cjY0In0=")
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
