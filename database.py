@@ -15,9 +15,11 @@ DATABASE_URL = f"mysql+pymysql://{settings.DB_USER}:{settings.DB_PASSWORD}@{sett
 engine = create_engine(
     DATABASE_URL,
     echo=settings.DEBUG,
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    pool_pre_ping=True,       # Verify connections before use (handles stale connections)
+    pool_size=5,              # Maintain 5 persistent connections
+    max_overflow=10,          # Allow up to 10 additional connections under load
+    pool_recycle=1800,        # Recycle connections every 30 minutes (prevents timeouts)
+    pool_timeout=30,          # Wait up to 30s for a connection from the pool
     connect_args={
         "connect_timeout": 15,
         "charset": "utf8mb4",

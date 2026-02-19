@@ -140,7 +140,7 @@ def verify_token_silent(token: str) -> Optional[dict]:
 
 
 def generate_otp(length: int = 6) -> str:
-    """Generate a random OTP code
+    """Generate a cryptographically secure random OTP code
     
     Args:
         length: Length of OTP (default: 6)
@@ -148,9 +148,11 @@ def generate_otp(length: int = 6) -> str:
     Returns:
         Random numeric OTP string
     """
-    import random
-    import string
-    return ''.join(random.choices(string.digits, k=length))
+    import secrets
+    # Generate a secure random number with the specified number of digits
+    max_val = 10 ** length
+    otp_num = secrets.randbelow(max_val)
+    return str(otp_num).zfill(length)
 
 
 def validate_password_strength(password: str) -> tuple[bool, str]:

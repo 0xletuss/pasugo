@@ -316,8 +316,7 @@ def register_request_otp(request: RegisterOTPRequest, db: Session = Depends(get_
             "success": True,
             "message": "OTP sent to your email. Valid for 10 minutes.",
             "data": {
-                "email": email,
-                "otp_code": otp_code  # Include for debugging - remove in production
+                "email": email
             }
         }
     
@@ -549,13 +548,10 @@ def forgot_password_request_otp(request: ForgotPasswordOTPRequest, db: Session =
         # Always return generic message for security
         logger.info(f"Password reset OTP requested for: {email}")
         
-        otp_debug = otp_code if user else None
+        otp_debug = None  # OTP codes are never exposed in responses
         return {
             "success": True,
-            "message": "If the email exists, you will receive an OTP. Valid for 10 minutes.",
-            "data": {
-                "otp_code": otp_debug  # Include for debugging - remove in production
-            }
+            "message": "If the email exists, you will receive an OTP. Valid for 10 minutes."
         }
     
     except Exception as e:

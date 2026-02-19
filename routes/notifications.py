@@ -4,6 +4,7 @@ from database import get_db
 from models.user import User
 from models.notification import Notification
 from utils.dependencies import get_current_active_user
+from utils.cache import cache
 from datetime import datetime
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
@@ -16,13 +17,18 @@ def get_notifications(
 ):
     """Get user's notifications"""
     
+    cache_key = f"notifications:list:{current_user.user_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    
     notifications = db.query(Notification) \
         .filter(Notification.user_id == current_user.user_id) \
         .order_by(Notification.created_at.desc()) \
         .limit(50) \
         .all()
     
-    return {
+    result = {
         "success": True,
         "message": "Notifications retrieved successfully",
         "data": [
@@ -37,6 +43,8 @@ def get_notifications(
             for n in notifications
         ]
     }
+    cache.set(cache_key, result, ttl=10)
+    return result
 
 
 @router.get("/unread-count")
@@ -46,6 +54,11 @@ def get_unread_count(
 ):
     """Get count of unread notifications"""
     
+    cache_key = f"notifications:unread:{current_user.user_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    
     count = db.query(Notification) \
         .filter(
             Notification.user_id == current_user.user_id,
@@ -53,13 +66,15 @@ def get_unread_count(
         ) \
         .count()
     
-    return {
+    result = {
         "success": True,
         "message": "Unread count retrieved successfully",
         "data": {
             "unread_count": count
         }
     }
+    cache.set(cache_key, result, ttl=10)
+    return result
 
 
 @router.patch("/{notification_id}/read")
@@ -86,6 +101,10 @@ def mark_as_read(
     
     db.commit()
     
+    # Invalidate notification caches for this user
+    cache.delete(f"notifications:unread:{current_user.user_id}")
+    cache.delete(f"notifications:list:{current_user.user_id}")
+    
     return {
         "success": True,
         "message": "Notification marked as read"
@@ -110,6 +129,10 @@ def mark_all_as_read(
         })
     
     db.commit()
+    
+    # Invalidate notification caches for this user
+    cache.delete(f"notifications:unread:{current_user.user_id}")
+    cache.delete(f"notifications:list:{current_user.user_id}")
     
     return {
         "success": True,

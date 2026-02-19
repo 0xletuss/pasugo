@@ -14,6 +14,7 @@ from models.rider import Rider
 from models.request import Request, RequestStatus
 from models.notification import Notification, NotificationType
 from utils.dependencies import get_current_active_user
+from utils.cache import cache
 
 router = APIRouter(prefix="/ratings", tags=["Ratings"])
 
@@ -165,6 +166,10 @@ def submit_rating(
         db.add(notification)
         db.commit()
 
+    # Invalidate rider ratings cache and profile cache
+    cache.delete(f"rider:ratings:{request.rider_id}")
+    cache.delete_pattern(f"rider:profile:*")
+
     return {
         "success": True,
         "message": "Rating submitted successfully!",
@@ -188,6 +193,12 @@ def get_rider_ratings(
     rider = db.query(Rider).filter(Rider.rider_id == rider_id).first()
     if not rider:
         raise HTTPException(status_code=404, detail="Rider not found")
+
+    # Check cache first
+    cache_key = f"rider:ratings:{rider_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     ratings = db.execute(
         text("""
@@ -215,7 +226,7 @@ def get_rider_ratings(
             "feedback_text": r[5]
         })
 
-    return {
+    result = {
         "success": True,
         "data": {
             "rider_id": rider_id,
@@ -224,6 +235,8 @@ def get_rider_ratings(
             "ratings": ratings_list
         }
     }
+    cache.set(cache_key, result, ttl=60)
+    return result
 
 
 @router.get("/my-ratings")

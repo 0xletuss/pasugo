@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from database import get_db
@@ -79,14 +79,21 @@ def create_payment(
 
 @router.get("/my-payments")
 def get_my_payments(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get current user's payments"""
+    """Get current user's payments with pagination"""
     
-    payments = db.query(Payment) \
-        .filter(Payment.customer_id == current_user.user_id) \
-        .order_by(Payment.created_at.desc()) \
+    query = db.query(Payment) \
+        .filter(Payment.customer_id == current_user.user_id)
+    
+    total = query.count()
+    
+    payments = query.order_by(Payment.created_at.desc()) \
+        .offset((page - 1) * page_size) \
+        .limit(page_size) \
         .all()
     
     return {
@@ -103,7 +110,13 @@ def get_my_payments(
                 "created_at": p.created_at.isoformat()
             }
             for p in payments
-        ]
+        ],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": (total + page_size - 1) // page_size
+        }
     }
 
 

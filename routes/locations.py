@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from routes.auth import get_current_user
 from models.user import User
+from utils.cache import cache
 
 # Create router
 router = APIRouter(prefix="/locations", tags=["locations"])
@@ -137,7 +138,7 @@ async def update_location(
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to update location")
 
 
 @router.get("/riders/available")
@@ -154,6 +155,14 @@ async def get_available_riders(
     Sorted by distance from customer's location
     """
     try:
+        # Cache key based on rounded lat/lng grid (~1km), radius, and limit
+        grid_lat = round(lat, 2)
+        grid_lng = round(lng, 2)
+        cache_key = f"riders:available:{grid_lat}:{grid_lng}:{int(radius)}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         # Get available riders with their locations
         rows = db.execute(
             text("""
@@ -212,7 +221,7 @@ async def get_available_riders(
         # Sort by distance
         riders_list.sort(key=lambda r: r["distance_km"])
 
-        return {
+        result = {
             "success": True,
             "riders": riders_list,
             "count": len(riders_list),
@@ -222,9 +231,11 @@ async def get_available_riders(
                 "radius_km": radius
             }
         }
+        cache.set(cache_key, result, ttl=5)
+        return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve available riders")
 
 
 @router.get("/riders/nearby")
@@ -243,11 +254,15 @@ async def get_nearby_riders(
         if status not in valid_statuses:
             status = "available"
 
-        # Build status filter
+        # Build parameterized status filter
         if status == "all":
-            status_filter = "r.availability_status IN ('available', 'busy', 'offline')"
+            status_values = ['available', 'busy', 'offline']
         else:
-            status_filter = f"r.availability_status = '{status}'"
+            status_values = [status]
+
+        # Use parameterized query to prevent SQL injection
+        placeholders = ', '.join([f':status_{i}' for i in range(len(status_values))])
+        params = {f'status_{i}': v for i, v in enumerate(status_values)}
 
         query = f"""
             SELECT 
@@ -267,12 +282,12 @@ async def get_nearby_riders(
             FROM riders r
             JOIN users u ON r.user_id = u.user_id
             LEFT JOIN user_locations ul ON u.user_id = ul.user_id
-            WHERE {status_filter}
+            WHERE r.availability_status IN ({placeholders})
             AND ul.created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
             ORDER BY r.rating DESC, r.rider_id
         """
 
-        rows = db.execute(text(query)).fetchall()
+        rows = db.execute(text(query), params).fetchall()
 
         riders_list = []
         for row in rows:
@@ -311,7 +326,7 @@ async def get_nearby_riders(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve nearby riders")
 
 
 @router.get("/riders/{rider_id}")
@@ -371,7 +386,7 @@ async def get_rider_location(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve rider location")
 
 
 @router.get("/{user_id}")
@@ -418,7 +433,7 @@ async def get_user_location(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve user location")
 
 
 @router.get("/health")

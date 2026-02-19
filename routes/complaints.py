@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -55,14 +55,21 @@ def create_complaint(
 
 @router.get("/my-complaints")
 def get_my_complaints(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get current user's complaints"""
+    """Get current user's complaints with pagination"""
     
-    complaints = db.query(Complaint) \
-        .filter(Complaint.customer_id == current_user.user_id) \
-        .order_by(Complaint.created_at.desc()) \
+    query = db.query(Complaint) \
+        .filter(Complaint.customer_id == current_user.user_id)
+    
+    total = query.count()
+    
+    complaints = query.order_by(Complaint.created_at.desc()) \
+        .offset((page - 1) * page_size) \
+        .limit(page_size) \
         .all()
     
     return {
@@ -78,7 +85,13 @@ def get_my_complaints(
                 "created_at": c.created_at.isoformat()
             }
             for c in complaints
-        ]
+        ],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": (total + page_size - 1) // page_size
+        }
     }
 
 

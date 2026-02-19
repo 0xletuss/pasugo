@@ -1,10 +1,12 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import JSONResponse
 from config import settings
 import uvicorn
 import logging
 import traceback
+import os
 
 # Set up logging
 logging.basicConfig(
@@ -35,6 +37,9 @@ from routes.messaging import router as messaging_router
 # ✅ Import ratings router
 from routes.ratings import router as ratings_router
 
+# ✅ Import addresses router
+from routes.addresses import router as addresses_router
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,
@@ -53,6 +58,11 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
     max_age=3600,  # Cache preflight requests for 1 hour
 )
+
+# Enforce HTTPS in production (Render, Railway, etc. terminate TLS at proxy)
+# Only enable when not running locally
+if os.getenv("RENDER") or os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("FORCE_HTTPS"):
+    app.add_middleware(HTTPSRedirectMiddleware)
 
 
 # Global exception handler with CORS headers
@@ -116,10 +126,10 @@ def health_check_db():
     """Check database connectivity"""
     try:
         from database import get_db
-        from sqlalchemy.orm import Session
+        from sqlalchemy import text as sa_text
         db = next(get_db())
         # Try a simple query
-        db.execute("SELECT 1")
+        db.execute(sa_text("SELECT 1"))
         return {
             "success": True,
             "message": "Database connection successful",
@@ -130,7 +140,6 @@ def health_check_db():
         return {
             "success": False,
             "message": "Database connection failed",
-            "error": str(e),
             "status": "error"
         }
 
@@ -184,6 +193,19 @@ def startup_event():
         logger.warning("📝 OTPs will only be logged to console")
     logger.info("=" * 70)
     
+    # Initialize Redis cache
+    try:
+        from utils.cache import cache
+        if cache.enabled:
+            if cache.ping():
+                logger.info("✅ Redis cache is connected and ready!")
+            else:
+                logger.warning("⚠️ Redis is configured but not reachable - caching disabled")
+        else:
+            logger.info("ℹ️ Redis caching is disabled (no REDIS_URL configured)")
+    except Exception as e:
+        logger.warning(f"⚠️ Redis initialization check failed: {e}")
+
     # Initialize database tables
     try:
         from database import init_db

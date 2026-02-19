@@ -3,6 +3,7 @@
 
 from sqlalchemy.orm import Session
 from models.notification import Notification, NotificationType
+from utils.cache import cache
 
 
 def create_notification(db: Session, user_id: int, notification_type: str, title: str, message: str, reference_id: int = None, reference_type: str = None):
@@ -17,6 +18,11 @@ def create_notification(db: Session, user_id: int, notification_type: str, title
     )
     db.add(notif)
     db.commit()
+    
+    # Invalidate notification caches for this user
+    cache.delete(f"notifications:unread:{user_id}")
+    cache.delete(f"notifications:list:{user_id}")
+    
     return notif
 
 

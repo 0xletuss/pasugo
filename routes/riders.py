@@ -10,6 +10,7 @@ from models.user_preference import UserPreference
 from utils.dependencies import get_current_active_user, require_role
 from utils.security import hash_password
 from utils.cloudinary_manager import CloudinaryManager
+from utils.cache import cache
 from datetime import datetime
 import logging
 import re
@@ -195,10 +196,10 @@ async def register_rider(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error during rider registration: {str(e)}")
+        logger.error(f"Error during rider registration: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to register rider: {str(e)}"
+            detail="Failed to register rider. Please try again."
         )
 
 
@@ -258,6 +259,11 @@ def get_rider_profile(
 ):
     """Get current rider's profile"""
     
+    cache_key = f"rider:profile:{current_user.user_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    
     rider = db.query(Rider).filter(Rider.user_id == current_user.user_id).first()
     
     if not rider:
@@ -266,7 +272,7 @@ def get_rider_profile(
             detail="Rider profile not found"
         )
     
-    return {
+    result = {
         "success": True,
         "message": "Rider profile retrieved successfully",
         "data": {
@@ -282,6 +288,8 @@ def get_rider_profile(
             "gcash_number": rider.gcash_number
         }
     }
+    cache.set(cache_key, result, ttl=30)
+    return result
 
 
 @router.put("/gcash")
@@ -307,6 +315,9 @@ def update_gcash_info(
     
     db.commit()
     db.refresh(rider)
+    
+    # Invalidate rider profile cache
+    cache.delete(f"rider:profile:{current_user.user_id}")
     
     return {
         "success": True,
@@ -363,6 +374,10 @@ def update_rider_status(
     
     rider.availability_status = request.status
     db.commit()
+    
+    # Invalidate rider profile and available riders caches
+    cache.delete(f"rider:profile:{current_user.user_id}")
+    cache.delete_pattern("riders:available:*")
     
     return {
         "success": True,

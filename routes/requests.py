@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timedelta
@@ -14,7 +14,8 @@ from utils.notification_helper import (
     notify_payment_confirmed, notify_request_cancelled
 )
 from decimal import Decimal
-from sqlalchemy import and_, text
+from sqlalchemy import and_, text, func
+from utils.cache import cache
 import logging
 
 notif_logger = logging.getLogger(__name__)
@@ -237,6 +238,13 @@ def get_my_requests(
         .limit(page_size) \
         .all()
 
+    # Pre-fetch customer names for riders in one query (avoid N+1)
+    customer_name_map = {}
+    if current_user.user_type == "rider" and requests:
+        customer_ids = list({req.customer_id for req in requests})
+        customers = db.query(User.user_id, User.full_name).filter(User.user_id.in_(customer_ids)).all()
+        customer_name_map = {c.user_id: c.full_name for c in customers}
+
     result_data = []
     for req in requests:
         item = {
@@ -248,10 +256,9 @@ def get_my_requests(
             "created_at": req.created_at.isoformat(),
             "rider_id": req.rider_id
         }
-        # Include customer name for riders
+        # Include customer name for riders (from pre-fetched map)
         if current_user.user_type == "rider":
-            customer = db.query(User).filter(User.user_id == req.customer_id).first()
-            item["customer_name"] = customer.full_name if customer else "Customer"
+            item["customer_name"] = customer_name_map.get(req.customer_id, "Customer")
         result_data.append(item)
 
     return {
@@ -302,9 +309,16 @@ def get_pending_requests_for_rider(
         )
     ).order_by(Request.notification_sent_at.desc()).all()
 
+    # Pre-fetch all customer info in one query (avoid N+1)
+    customer_ids = list({req.customer_id for req in requests})
+    customers = {}
+    if customer_ids:
+        customer_rows = db.query(User.user_id, User.full_name, User.phone_number).filter(User.user_id.in_(customer_ids)).all()
+        customers = {c.user_id: c for c in customer_rows}
+
     result = []
     for req in requests:
-        customer = db.query(User).filter(User.user_id == req.customer_id).first()
+        customer = customers.get(req.customer_id)
 
         time_elapsed = (datetime.utcnow() - req.notification_sent_at).total_seconds()
         time_remaining = max(0, 600 - int(time_elapsed))
@@ -370,7 +384,8 @@ def get_request_details(
     rider_name = None
     rider_phone = None
     if request.rider_id:
-        rider = db.query(Rider).filter(Rider.rider_id == request.rider_id).first()
+        # Use joinedload-style: query Rider with User in one shot
+        rider = db.query(Rider).options(joinedload(Rider.user)).filter(Rider.rider_id == request.rider_id).first()
         if rider and rider.user:
             rider_name = rider.user.full_name
             rider_phone = rider.user.phone_number
@@ -575,6 +590,7 @@ def accept_request(
 
     db.commit()
     db.refresh(request)
+    cache.delete(f"request:poll:{request_id}")
 
     # Notify customer that rider accepted
     try:
@@ -646,6 +662,7 @@ def update_request_status(
 
     db.commit()
     db.refresh(request)
+    cache.delete(f"request:poll:{request_id}")
 
     return {
         "success": True,
@@ -695,6 +712,7 @@ def cancel_request(
 
     db.commit()
     db.refresh(request)
+    cache.delete(f"request:poll:{request_id}")
 
     return {
         "success": True,
@@ -823,7 +841,7 @@ def select_rider_for_request(
             detail=f"Request already has status: {request.status}"
         )
 
-    rider = db.query(Rider).filter(Rider.rider_id == rider_id).first()
+    rider = db.query(Rider).options(joinedload(Rider.user)).filter(Rider.rider_id == rider_id).first()
     if not rider:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -836,6 +854,9 @@ def select_rider_for_request(
 
     db.commit()
     db.refresh(request)
+    cache.delete(f"request:poll:{request_id}")
+
+    rider_full_name = rider.user.full_name if rider.user else "Rider"
 
     # Create notification for the selected rider
     try:
@@ -845,11 +866,11 @@ def select_rider_for_request(
 
     return {
         "success": True,
-        "message": f"Rider {rider.user.full_name} has been notified",
+        "message": f"Rider {rider_full_name} has been notified",
         "data": {
             "request_id": request.request_id,
             "selected_rider_id": rider_id,
-            "rider_name": rider.user.full_name,
+            "rider_name": rider_full_name,
             "notification_sent_at": request.notification_sent_at.isoformat()
         }
     }
@@ -890,6 +911,7 @@ def decline_request(
     request.updated_at = datetime.utcnow()
 
     db.commit()
+    cache.delete(f"request:poll:{request_id}")
 
     return {
         "success": True,
@@ -943,6 +965,7 @@ def start_delivery(
 
     db.commit()
     db.refresh(request)
+    cache.delete(f"request:poll:{request_id}")
 
     # Notify customer that delivery started
     try:
@@ -1043,6 +1066,7 @@ def submit_bill(
 
     db.commit()
     db.refresh(request)
+    cache.delete(f"request:poll:{request_id}")
 
     # Notify customer about the bill
     try:
@@ -1116,6 +1140,7 @@ def submit_payment(
 
     db.commit()
     db.refresh(request)
+    cache.delete(f"request:poll:{request_id}")
 
     # Notify rider about payment
     try:
@@ -1197,6 +1222,7 @@ def confirm_payment(
 
     db.commit()
     db.refresh(request)
+    cache.delete(f"request:poll:{request_id}")
 
     msg = "Payment confirmed!"
     if delivery_auto_completed:
@@ -1267,6 +1293,7 @@ def complete_delivery(
 
     db.commit()
     db.refresh(request)
+    cache.delete(f"request:poll:{request_id}")
 
     # Notify customer about delivery completion
     try:
@@ -1296,6 +1323,18 @@ def poll_request_status(
     Returns just the essential info to check if rider accepted.
     """
 
+    # Try cache first (3s TTL – this endpoint is polled frequently)
+    cache_key = f"request:poll:{request_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        # Still verify ownership from the cache itself
+        if current_user.user_type == "customer" and cached.get("data", {}).get("customer_id") != current_user.user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized"
+            )
+        return cached
+
     request = db.query(Request).filter(Request.request_id == request_id).first()
     if not request:
         raise HTTPException(
@@ -1317,10 +1356,12 @@ def poll_request_status(
             request.selected_rider_id = None
             request.notification_sent_at = None
             db.commit()
+            # Don't cache timed-out state
 
     rider_info = None
     if request.rider_id:
-        rider = db.query(Rider).filter(Rider.rider_id == request.rider_id).first()
+        # Single query with join to avoid N+1 (Rider -> User)
+        rider = db.query(Rider).options(joinedload(Rider.user)).filter(Rider.rider_id == request.rider_id).first()
         if rider and rider.user:
             rider_info = {
                 "rider_id": rider.rider_id,
@@ -1331,10 +1372,11 @@ def poll_request_status(
                 "rating": float(rider.rating) if rider.rating else 0
             }
 
-    return {
+    result = {
         "success": True,
         "data": {
             "request_id": request.request_id,
+            "customer_id": request.customer_id,  # used for auth check on cache hit
             "status": enum_val(request.status),
             "rider_id": request.rider_id,
             "selected_rider_id": request.selected_rider_id,
@@ -1349,3 +1391,8 @@ def poll_request_status(
             "updated_at": request.updated_at.isoformat()
         }
     }
+
+    if not timed_out:
+        cache.set(cache_key, result, ttl=3)
+
+    return result
