@@ -12,13 +12,24 @@ class RiderStatus(str, enum.Enum):
     suspended = "suspended"
 
 
+class ApprovalStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class Rider(Base):
     __tablename__ = "riders"
 
     rider_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), unique=True, nullable=False)
     id_number = Column(String(50), nullable=False, unique=True)
+    selfie_url = Column(String(500), nullable=True)
     id_document_url = Column(String(500), nullable=True)
+    approval_status = Column(Enum(ApprovalStatus), default=ApprovalStatus.pending, nullable=False, index=True)
+    approved_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    rejection_reason = Column(String(500), nullable=True)
     vehicle_type = Column(String(50), nullable=True)
     vehicle_plate = Column(String(50), nullable=True)
     license_number = Column(String(50), nullable=True)

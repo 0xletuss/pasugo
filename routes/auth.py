@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr, field_validator
+from typing import Optional
 from database import get_db
 from models.user import User, UserType
 from models.user_preference import UserPreference
@@ -90,6 +91,12 @@ class VerifyRegistrationOTPRequest(BaseModel):
     password: str
     user_type: UserType
     address: str = None
+    # Rider-specific fields (optional)
+    id_number: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    vehicle_plate: Optional[str] = None
+    license_number: Optional[str] = None
+    service_zones: Optional[str] = None
 
     @field_validator('otp')
     @classmethod
@@ -454,18 +461,14 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
         if request.user_type == UserType.rider:
             logger.info(f"Creating rider profile for user: {email}")
             
-            # Generate a temporary ID number if not provided
-            # Format: RIDER-{user_id}-{timestamp}
-            temp_id_number = f"RIDER-{new_user.user_id}-{int(datetime.utcnow().timestamp())}"
-            
             new_rider = Rider(
                 user_id=new_user.user_id,
-                id_number=temp_id_number,  # Required field
-                id_document_url=None,  # Can be uploaded later
-                vehicle_type='motorcycle',  # Default, can be updated later
-                vehicle_plate=None,  # Can be updated later
-                license_number=None,  # Can be updated later
-                availability_status=RiderStatus.offline,  # Default to offline
+                id_number=request.id_number or f"RIDER-{new_user.user_id}",
+                id_document_url=None,  # Can be uploaded later via separate endpoint
+                vehicle_type=request.vehicle_type or 'motorcycle',
+                vehicle_plate=request.vehicle_plate,
+                license_number=request.license_number,
+                availability_status=RiderStatus.offline,
                 rating=0.00,
                 total_tasks_completed=0,
                 total_earnings=0.00,

@@ -55,7 +55,8 @@ def get_current_active_user(current_user: User = Depends(get_current_user)) -> U
 def require_role(allowed_roles: list):
     """Dependency to check if user has required role"""
     def role_checker(current_user: User = Depends(get_current_active_user)) -> User:
-        if current_user.user_type not in allowed_roles:
+        user_role = current_user.user_type.value if hasattr(current_user.user_type, "value") else str(current_user.user_type)
+        if user_role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions"

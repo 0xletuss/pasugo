@@ -4,7 +4,7 @@ from pydantic import BaseModel, validator
 from typing import Optional
 from database import get_db
 from models.user import User, UserType
-from models.rider import Rider, RiderStatus
+from models.rider import ApprovalStatus, Rider, RiderStatus
 from models.bill_request import BillRequest, RequestStatus
 from models.user_preference import UserPreference
 from utils.dependencies import get_current_active_user, require_role
@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 cloudinary_manager = CloudinaryManager()
 
 router = APIRouter(prefix="/riders", tags=["Riders"])
+
+
+def _user_type_value(user: User) -> str:
+    if hasattr(user.user_type, "value"):
+        return user.user_type.value
+    return str(user.user_type)
 
 
 # Schemas
@@ -201,6 +207,111 @@ async def register_rider(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to register rider. Please try again."
         )
+
+
+@router.post("/upload/selfie")
+async def upload_rider_selfie(
+    selfie_file: UploadFile = File(...),
+    current_user: User = Depends(require_role(["rider"])),
+    db: Session = Depends(get_db),
+):
+    """Upload rider selfie for admin verification."""
+    try:
+        if not selfie_file.content_type or not selfie_file.content_type.startswith("image/"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selfie must be an image file")
+
+        rider = db.query(Rider).filter(Rider.user_id == current_user.user_id).first()
+        if not rider:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rider profile not found")
+
+        result = await CloudinaryManager.upload_file(
+            selfie_file,
+            folder="riders/selfies",
+            public_id=f"rider_selfie_{rider.rider_id}",
+            resource_type="image",
+        )
+
+        rider.selfie_url = result["url"]
+        rider.approval_status = ApprovalStatus.pending
+        rider.rejection_reason = None
+        rider.approved_at = None
+        rider.approved_by = None
+        db.commit()
+        db.refresh(rider)
+
+        return {
+            "success": True,
+            "message": "Selfie uploaded successfully",
+            "data": {"selfie_url": rider.selfie_url, "approval_status": rider.approval_status.value},
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error uploading rider selfie: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to upload selfie")
+
+
+@router.post("/upload/id-document")
+async def upload_rider_id_document(
+    id_file: UploadFile = File(...),
+    current_user: User = Depends(require_role(["rider"])),
+    db: Session = Depends(get_db),
+):
+    """Upload rider ID document for admin verification."""
+    try:
+        rider = db.query(Rider).filter(Rider.user_id == current_user.user_id).first()
+        if not rider:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rider profile not found")
+
+        result = await CloudinaryManager.upload_file(
+            id_file,
+            folder="riders/id_documents",
+            public_id=f"rider_id_{rider.rider_id}",
+            resource_type="auto",
+        )
+
+        rider.id_document_url = result["url"]
+        rider.approval_status = ApprovalStatus.pending
+        rider.rejection_reason = None
+        db.commit()
+        db.refresh(rider)
+
+        return {
+            "success": True,
+            "message": "ID document uploaded successfully",
+            "data": {"id_document_url": rider.id_document_url, "approval_status": rider.approval_status.value},
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error uploading rider ID document: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to upload ID document")
+
+
+@router.get("/approval-status")
+def get_rider_approval_status(
+    current_user: User = Depends(require_role(["rider"])),
+    db: Session = Depends(get_db),
+):
+    """Return rider verification/approval status."""
+    rider = db.query(Rider).filter(Rider.user_id == current_user.user_id).first()
+    if not rider:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rider profile not found")
+
+    return {
+        "success": True,
+        "data": {
+            "rider_id": rider.rider_id,
+            "approval_status": rider.approval_status.value if rider.approval_status else ApprovalStatus.pending.value,
+            "documents_ready": bool(rider.selfie_url and rider.id_document_url),
+            "selfie_url": rider.selfie_url,
+            "id_document_url": rider.id_document_url,
+            "rejection_reason": rider.rejection_reason,
+            "approved_at": rider.approved_at.isoformat() if rider.approved_at else None,
+        },
+    }
 
 
 # ============================================================================

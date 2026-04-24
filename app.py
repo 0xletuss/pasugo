@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from config import settings
 import uvicorn
 import logging
@@ -105,6 +106,33 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     )
 
 
+# Pydantic validation error handler with CORS headers
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation error: {exc}", exc_info=True)
+    errors = []
+    for error in exc.errors():
+        errors.append({
+            "field": ".".join(str(loc) for loc in error["loc"][1:]),  # Skip "body"
+            "message": error["msg"],
+            "type": error["type"]
+        })
+    return JSONResponse(
+        status_code=422,
+        content={
+            "success": False,
+            "message": "Validation error",
+            "detail": errors,
+            "errors": exc.errors()  # Include raw errors for debugging
+        },
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
+
 # Health check endpoint
 @app.get("/")
 def root():
@@ -172,6 +200,10 @@ app.include_router(addresses_router, prefix="/api")
 
 # ✅ Admin dashboard router
 app.include_router(admin_router, prefix="/api")
+
+# ✅ Admin rider approval router
+from routes.admin_rider_approval import router as admin_rider_approval_router
+app.include_router(admin_rider_approval_router, prefix="/api")
 
 
 # Startup event

@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     DB_HOST: str = os.getenv("DB_HOST", "pasugodb-bayadpasugo.g.aivencloud.com")
     DB_PORT: int = int(os.getenv("DB_PORT", "17013"))
     DB_USER: str = os.getenv("DB_USER", "avnadmin")
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "za$Snb4@&p8SiHe8A4{W]#WBr7c77li)")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "AVNS_m0KyQdnFXR10KZPnb3u")
     DB_NAME: str = os.getenv("DB_NAME", "defaultdb")
     
     # JWT Settings
