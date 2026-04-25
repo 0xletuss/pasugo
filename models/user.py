@@ -37,7 +37,7 @@ class User(Base):
     devices = relationship("UserDevice", back_populates="user")
     preferences = relationship("UserPreference", back_populates="user", uselist=False)
     admin_profile = relationship("AdminUser", back_populates="user", uselist=False)
-    rider_profile = relationship("Rider", back_populates="user", uselist=False)
+    rider_profile = relationship("Rider", foreign_keys="[Rider.user_id]", back_populates="user", uselist=False)
     payments = relationship("Payment", back_populates="customer")
     ratings_given = relationship("Rating", back_populates="customer")
     password_reset_tokens = relationship("PasswordResetToken", back_populates="user")
