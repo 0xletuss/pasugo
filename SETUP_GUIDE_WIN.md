@@ -61,11 +61,11 @@ pip install -r requirements.txt
 The database is already configured in `config.py` with these credentials:
 
 ```
-Database: defaultdb
-Host: pasugodb-bayadpasugo.g.aivencloud.com
-Port: 17013
-User: avnadmin
-Password: AVNS_m0KyQdnFXR10KZPnb3u
+Database: <your-db-name>
+Host: <your-db-host>
+Port: <your-db-port>
+User: <your-db-user>
+Password: <set-in-environment-variable>
 ```
 
 **Verify Connection:**
@@ -235,11 +235,11 @@ pip list  # Should show installed packages
 
 **Check credentials in config.py:**
 ```python
-DB_HOST: str = "pasugodb-bayadpasugo.g.aivencloud.com"
-DB_PORT: int = 17013
-DB_USER: str = "avnadmin"
-DB_PASSWORD: str = "AVNS_m0KyQdnFXR10KZPnb3u"
-DB_NAME: str = "defaultdb"
+DB_HOST: str = "<your-db-host>"
+DB_PORT: int = 3306
+DB_USER: str = "<your-db-user>"
+DB_PASSWORD: str = "<set-via-env-var>"
+DB_NAME: str = "<your-db-name>"
 ```
 
 **Test connection:**

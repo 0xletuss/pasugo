@@ -32,11 +32,11 @@
 ### 3. **Backend: Database Configuration**
 
 - ✅ Updated credentials in `config.py`:
-  - Host: `pasugodb-bayadpasugo.g.aivencloud.com`
-  - Port: `17013`
-  - User: `avnadmin`
-  - Password: `AVNS_m0KyQdnFXR10KZPnb3u` ← **UPDATED**
-  - Database: `defaultdb`
+  - Host: `<your-db-host>`
+  - Port: `<your-db-port>`
+  - User: `<your-db-user>`
+  - Password: `<set-via-env-var>`
+  - Database: `<your-db-name>`
 
 ### 4. **Backend: Registration Endpoints Enhanced**
 

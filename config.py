@@ -10,12 +10,12 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
     
-    # Database Settings - Aiven
-    DB_HOST: str = os.getenv("DB_HOST", "pasugodb-bayadpasugo.g.aivencloud.com")
-    DB_PORT: int = int(os.getenv("DB_PORT", "17013"))
-    DB_USER: str = os.getenv("DB_USER", "avnadmin")
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "AVNS_m0KyQdnFXR10KZPnb3u")
-    DB_NAME: str = os.getenv("DB_NAME", "defaultdb")
+    # Database Settings (set in environment variables)
+    DB_HOST: str = os.getenv("DB_HOST", "localhost")
+    DB_PORT: int = int(os.getenv("DB_PORT", "3306"))
+    DB_USER: str = os.getenv("DB_USER", "root")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
+    DB_NAME: str = os.getenv("DB_NAME", "pasugo")
     
     # JWT Settings
     SECRET_KEY: str = os.getenv("SECRET_KEY", "pasugo-secret-key-2026-aiven-migration-production")

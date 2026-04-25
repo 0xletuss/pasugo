@@ -54,11 +54,11 @@ if (formData.user_type === "rider") {
 
 #### 1. **Database Configuration** (`config.py`)
 ```python
-DB_HOST = "pasugodb-bayadpasugo.g.aivencloud.com"
-DB_PORT = 17013
-DB_USER = "avnadmin"
-DB_PASSWORD = "AVNS_m0KyQdnFXR10KZPnb3u"  # ✅ UPDATED
-DB_NAME = "defaultdb"
+DB_HOST = "<your-db-host>"
+DB_PORT = 3306
+DB_USER = "<your-db-user>"
+DB_PASSWORD = "<set-via-env-var>"
+DB_NAME = "<your-db-name>"
 ```
 
 #### 2. **Auth Schema Updates** (`routes/auth.py`)
