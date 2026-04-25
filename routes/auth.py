@@ -102,9 +102,10 @@ class VerifyRegistrationOTPRequest(BaseModel):
     @classmethod
     def validate_otp(cls, v):
         """Validate OTP format"""
-        if not v or len(v.strip()) != 6 or not v.isdigit():
+        normalized = v.strip() if v else ""
+        if not normalized or len(normalized) != 6 or not normalized.isdigit():
             raise ValueError('OTP must be 6 digits')
-        return v.strip()
+        return normalized
 
 
 class LoginRequest(BaseModel):
@@ -294,6 +295,12 @@ def register_request_otp(request: RegisterOTPRequest, db: Session = Depends(get_
         ).order_by(OTP.created_at.desc()).first()
         
         if existing_otp:
+            # Re-send the same stored OTP so inbox code stays aligned with DB code.
+            if brevo_sender:
+                resend_result = brevo_sender.send_registration_otp(email, existing_otp.otp_code)
+                if not resend_result['success']:
+                    logger.warning(f"Failed to resend dedup registration OTP to: {email}")
+
             logger.info(f"Registration OTP reused (dedup) for: {email}")
             return {
                 "success": True,
@@ -384,57 +391,61 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
                 detail="Email already registered"
             )
         
-        # Get latest OTP for this email (email is stored in phone_number field)
-        otp = db.query(OTP).filter(
+        # Get active OTPs for this email (email is stored in phone_number field).
+        # This handles edge cases where concurrent requests create more than one valid OTP row.
+        now = datetime.utcnow()
+        active_otps = db.query(OTP).filter(
             OTP.otp_type == OTPType.registration,
             OTP.phone_number == email,
-            OTP.is_verified == False
-        ).order_by(OTP.created_at.desc()).first()
-        
-        if not otp:
+            OTP.is_verified == False,
+            OTP.expires_at > now,
+        ).order_by(OTP.created_at.desc()).all()
+
+        if not active_otps:
             logger.warning(f"OTP not found for email={email} (type=registration, is_verified=False)")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="OTP not found. Please request a new one."
             )
-        
-        # Check if OTP is expired
-        now = datetime.utcnow()
-        logger.info(f"OTP check: now={now}, expires_at={otp.expires_at}, expired={now > otp.expires_at}")
-        if now > otp.expires_at:
-            db.delete(otp)
-            db.commit()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="OTP has expired. Please request a new one."
-            )
-        
-        # Check attempts
-        if otp.attempts >= 5:
-            db.delete(otp)
+
+        latest_otp = active_otps[0]
+        user_code = request.otp.strip() if request.otp else ""
+
+        logger.info(
+            f"OTP check: now={now}, active_count={len(active_otps)}, latest_expires_at={latest_otp.expires_at}"
+        )
+        logger.info(
+            f"OTP compare (latest): db='{latest_otp.otp_code.strip() if latest_otp.otp_code else ''}' "
+            f"vs request='{user_code}' for email={email}"
+        )
+
+        # Prefer exact match among active OTPs to avoid mismatch from parallel requests.
+        matching_otp = next(
+            (row for row in active_otps if (row.otp_code.strip() if row.otp_code else "") == user_code),
+            None,
+        )
+
+        # Check attempts against latest OTP record (rate limit guard)
+        if latest_otp.attempts >= 5:
+            db.delete(latest_otp)
             db.commit()
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many failed attempts. Please request a new OTP."
             )
-        
-        # Verify OTP code (strip both sides to avoid whitespace issues)
-        db_code = otp.otp_code.strip() if otp.otp_code else ""
-        user_code = request.otp.strip() if request.otp else ""
-        logger.info(f"OTP compare: db='{db_code}' vs request='{user_code}' for email={email}")
-        
-        if db_code != user_code:
-            otp.attempts += 1
+
+        if not matching_otp:
+            latest_otp.attempts += 1
             db.commit()
-            attempts_left = otp_manager.get_attempts_remaining(otp.attempts)
+            attempts_left = otp_manager.get_attempts_remaining(latest_otp.attempts)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid OTP. {attempts_left} attempts remaining."
             )
-        
-        # Mark OTP as verified
-        otp.is_verified = True
-        otp.verified_at = datetime.utcnow()
+
+        # Mark matched OTP as verified
+        matching_otp.is_verified = True
+        matching_otp.verified_at = datetime.utcnow()
         
         # Create user
         new_user = User(
@@ -482,7 +493,7 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
             logger.info(f"Rider profile created successfully for user: {email} (rider_id: {new_rider.rider_id})")
         
         # Delete the used OTP
-        db.delete(otp)
+        db.delete(matching_otp)
         db.commit()
         
         logger.info(f"User registered successfully: {email}")
