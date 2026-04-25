@@ -383,15 +383,7 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
     
     try:
         email = request.email.strip().lower()
-        
-        # Check if user already exists
-        existing_user = db.query(User).filter(User.email == email).first()
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
-            )
-        
+
         # Get active OTPs for this email (email is stored in phone_number field).
         # This handles edge cases where concurrent requests create more than one valid OTP row.
         now = datetime.utcnow()
@@ -447,81 +439,87 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
         # Mark matched OTP as verified
         matching_otp.is_verified = True
         matching_otp.verified_at = datetime.utcnow()
-        
-        # Create user
-        new_user = User(
-            full_name=request.full_name,
-            email=email,
-            phone_number=request.phone_number,
-            password_hash=hash_password(request.password),
-            user_type=request.user_type,
-            address=request.address,
-            is_active=True,
-            created_at=datetime.utcnow()
-        )
-        
-        db.add(new_user)
-        db.commit()
-        db.refresh(new_user)
-        
-        # Create default user preferences if missing.
-        # In some deployments, preferences may already be created by another flow/trigger.
-        existing_pref = db.query(UserPreference).filter(
-            UserPreference.user_id == new_user.user_id
-        ).first()
-        if not existing_pref:
-            try:
-                user_pref = UserPreference(user_id=new_user.user_id)
-                db.add(user_pref)
-                db.commit()
-            except IntegrityError:
-                db.rollback()
-                logger.warning(
-                    f"User preferences already exist for user_id={new_user.user_id}; continuing registration."
+
+        requested_user_type = request.user_type.value if hasattr(request.user_type, "value") else str(request.user_type)
+
+        # Idempotent registration recovery:
+        # If a user was partially created in a previous failed attempt, complete missing data and return success.
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            existing_user_type = existing_user.user_type.value if hasattr(existing_user.user_type, "value") else str(existing_user.user_type)
+            if existing_user_type != requested_user_type:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Email already registered as {existing_user_type}."
                 )
-        
-        # ✅ NEW: If user is a rider, create rider record
-        if request.user_type == UserType.rider:
-            logger.info(f"Creating rider profile for user: {email}")
-            
-            new_rider = Rider(
-                user_id=new_user.user_id,
-                id_number=request.id_number or f"RIDER-{new_user.user_id}",
-                id_document_url=None,  # Can be uploaded later via separate endpoint
-                vehicle_type=request.vehicle_type or 'motorcycle',
-                vehicle_plate=request.vehicle_plate,
-                license_number=request.license_number,
-                availability_status=RiderStatus.offline,
-                rating=0.00,
-                total_tasks_completed=0,
-                total_earnings=0.00,
+            user_record = existing_user
+            logger.info(f"Registration retry detected for existing user: {email} (user_id={user_record.user_id})")
+        else:
+            user_record = User(
+                full_name=request.full_name,
+                email=email,
+                phone_number=request.phone_number,
+                password_hash=hash_password(request.password),
+                user_type=request.user_type,
+                address=request.address,
+                is_active=True,
                 created_at=datetime.utcnow()
             )
-            
-            db.add(new_rider)
-            db.commit()
-            db.refresh(new_rider)
-            
-            logger.info(f"Rider profile created successfully for user: {email} (rider_id: {new_rider.rider_id})")
-        
-        # Delete the used OTP
+            db.add(user_record)
+            db.flush()
+
+        # Ensure default user preferences exist
+        existing_pref = db.query(UserPreference).filter(
+            UserPreference.user_id == user_record.user_id
+        ).first()
+        if not existing_pref:
+            db.add(UserPreference(user_id=user_record.user_id))
+
+        # Ensure rider profile exists when registering as rider
+        rider_record = None
+        if requested_user_type == UserType.rider.value:
+            rider_record = db.query(Rider).filter(Rider.user_id == user_record.user_id).first()
+            if not rider_record:
+                logger.info(f"Creating rider profile for user: {email}")
+                rider_record = Rider(
+                    user_id=user_record.user_id,
+                    id_number=request.id_number or f"RIDER-{user_record.user_id}",
+                    id_document_url=None,  # Can be uploaded later via separate endpoint
+                    vehicle_type=request.vehicle_type or "motorcycle",
+                    vehicle_plate=request.vehicle_plate,
+                    license_number=request.license_number,
+                    availability_status=RiderStatus.offline,
+                    rating=0.00,
+                    total_tasks_completed=0,
+                    total_earnings=0.00,
+                    created_at=datetime.utcnow()
+                )
+                db.add(rider_record)
+                db.flush()
+
+        # Delete the used OTP and commit registration atomically
         db.delete(matching_otp)
         db.commit()
-        
+
+        db.refresh(user_record)
+        if rider_record:
+            db.refresh(rider_record)
+
         logger.info(f"User registered successfully: {email}")
-        
+
         response_data = {
-            "user_id": new_user.user_id,
-            "email": new_user.email,
-            "full_name": new_user.full_name,
-            "user_type": new_user.user_type.value if hasattr(new_user.user_type, 'value') else str(new_user.user_type)
+            "user_id": user_record.user_id,
+            "email": user_record.email,
+            "full_name": user_record.full_name,
+            "user_type": user_record.user_type.value if hasattr(user_record.user_type, 'value') else str(user_record.user_type)
         }
-        
+
         # Add rider_id if user is a rider
-        if request.user_type == UserType.rider:
-            rider = db.query(Rider).filter(Rider.user_id == new_user.user_id).first()
-            if rider:
-                response_data["rider_id"] = rider.rider_id
+        if requested_user_type == UserType.rider.value:
+            if not rider_record:
+                rider_record = db.query(Rider).filter(Rider.user_id == user_record.user_id).first()
+            if rider_record:
+                response_data["rider_id"] = rider_record.rider_id
         
         return {
             "success": True,
