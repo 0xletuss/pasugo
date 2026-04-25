@@ -42,7 +42,8 @@ class Rider(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     # Relationships
-    user = relationship("User", back_populates="rider_profile")
+    # FIXED
+    user = relationship("User", foreign_keys=[user_id], back_populates="rider_profile")
     bill_requests = relationship("BillRequest", back_populates="rider")
 
     # Assigned requests (rider_id FK) - the rider who is doing the job
