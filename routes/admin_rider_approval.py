@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 
 from database import get_db
 from models.rider import ApprovalStatus, Rider, RiderStatus
@@ -26,6 +27,7 @@ class RejectRiderRequest(BaseModel):
 def list_pending_riders(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    include_empty: bool = Query(False, description="Include pending riders with no uploaded documents"),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -34,6 +36,15 @@ def list_pending_riders(
     q = db.query(Rider).options(joinedload(Rider.user)).filter(
         Rider.approval_status == ApprovalStatus.pending
     )
+
+    # Default behavior: show only riders who have started uploading verification docs.
+    if not include_empty:
+        q = q.filter(
+            or_(
+                Rider.selfie_url.isnot(None),
+                Rider.id_document_url.isnot(None),
+            )
+        )
     
     total = q.count()
     riders = q.order_by(Rider.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
@@ -50,10 +61,12 @@ def list_pending_riders(
             "vehicle_type": rider.vehicle_type,
             "vehicle_plate": rider.vehicle_plate,
             "license_number": rider.license_number,
-            "selfie_url": rider.selfie_url,
-            "id_document_url": rider.id_document_url,
-            "approval_status": rider.approval_status,
+            "selfie_url": rider.selfie_url or None,
+            "id_document_url": rider.id_document_url or None,
+            "approval_status": rider.approval_status.value if rider.approval_status else ApprovalStatus.pending.value,
             "documents_ready": bool(rider.selfie_url and rider.id_document_url),
+            "has_selfie": bool(rider.selfie_url),
+            "has_id_document": bool(rider.id_document_url),
             "created_at": rider.created_at.isoformat() if rider.created_at else None,
         })
     
