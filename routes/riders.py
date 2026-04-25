@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, validator
 from typing import Optional
 from database import get_db
@@ -174,9 +175,22 @@ async def register_rider(
         
         db.add(new_rider)
         
-        # Create default user preferences
-        user_pref = UserPreference(user_id=new_user.user_id)
-        db.add(user_pref)
+        # Create default user preferences if missing.
+        existing_pref = db.query(UserPreference).filter(
+            UserPreference.user_id == new_user.user_id
+        ).first()
+        if not existing_pref:
+            try:
+                user_pref = UserPreference(user_id=new_user.user_id)
+                db.add(user_pref)
+                db.flush()
+            except IntegrityError:
+                db.rollback()
+                # Re-attach rider after rollback so we don't lose profile creation.
+                db.add(new_rider)
+                logger.warning(
+                    f"User preferences already exist for user_id={new_user.user_id}; continuing rider registration."
+                )
         
         db.commit()
         db.refresh(new_rider)

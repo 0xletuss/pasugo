@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
 from database import get_db
@@ -463,10 +464,21 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
         db.commit()
         db.refresh(new_user)
         
-        # Create default user preferences
-        user_pref = UserPreference(user_id=new_user.user_id)
-        db.add(user_pref)
-        db.commit()
+        # Create default user preferences if missing.
+        # In some deployments, preferences may already be created by another flow/trigger.
+        existing_pref = db.query(UserPreference).filter(
+            UserPreference.user_id == new_user.user_id
+        ).first()
+        if not existing_pref:
+            try:
+                user_pref = UserPreference(user_id=new_user.user_id)
+                db.add(user_pref)
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                logger.warning(
+                    f"User preferences already exist for user_id={new_user.user_id}; continuing registration."
+                )
         
         # ✅ NEW: If user is a rider, create rider record
         if request.user_type == UserType.rider:
