@@ -473,7 +473,21 @@ def register_verify_otp(request: VerifyRegistrationOTPRequest, db: Session = Dep
             UserPreference.user_id == user_record.user_id
         ).first()
         if not existing_pref:
-            db.add(UserPreference(user_id=user_record.user_id))
+            pref = UserPreference(
+                user_id=user_record.user_id,
+                remember_me=True,
+                auto_login=True,
+                notification_enabled=True,
+                push_notification_enabled=True,
+                email_notification_enabled=True,
+                sms_notification_enabled=False,
+                app_theme="light",
+                language="en",
+                currency="PHP",
+                biometric_auth_enabled=False,
+                face_recognition_enabled=False
+            )
+            db.merge(pref)  # Use merge to handle duplicate key gracefully
 
         # Ensure rider profile exists when registering as rider
         rider_record = None
